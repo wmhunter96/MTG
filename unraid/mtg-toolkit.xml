@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>MTG-Toolkit</Name>
+  <Repository>ghcr.io/wmhunter96/mtg:latest</Repository>
+  <Registry>https://github.com/wmhunter96/MTG/pkgs/container/mtg</Registry>
+  <Branch/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/wmhunter96/MTG/issues</Support>
+  <Project>https://github.com/wmhunter96/MTG</Project>
+  <Overview>MTG Toolkit finds the cheapest Near Mint copy of every card in a decklist across Card Kingdom and TCGplayer, and checks EDHREC for popular, high-synergy cards your Commander deck is missing.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/wmhunter96/MTG/main/unraid/mtg-toolkit.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/wmhunter96/MTG/main/unraid/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="8000" Default="8010" Mode="tcp" Description="Host port for the MTG Toolkit web interface (8010 so it doesn't clash with DJDownload on 8000)" Type="Port" Display="always" Required="true" Mask="false">8010</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/mtg-toolkit" Mode="rw" Description="Settings (settings.yaml) and cached price lists, survives container updates" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/mtg-toolkit</Config>
+  <Config Name="Config Path" Target="CONFIG_PATH" Default="/config/settings.yaml" Mode="" Description="Path to settings.yaml inside the container" Type="Variable" Display="advanced" Required="false" Mask="false">/config/settings.yaml</Config>
+</Container>

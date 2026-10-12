@@ -1,0 +1,13 @@
+services:
+  mtg-toolkit:
+    build: .
+    container_name: mtg-toolkit
+    restart: unless-stopped
+    ports:
+      # 8010 on the host so it doesn't collide with DJDownload on 8000
+      - "8010:8000"
+    volumes:
+      # Settings + cached price lists, persisted across rebuilds
+      - ./config:/config
+    environment:
+      - CONFIG_PATH=/config/settings.yaml
