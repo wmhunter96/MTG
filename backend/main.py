@@ -13,6 +13,8 @@ Endpoints:
   GET  /api/sets                → recent paper sets for the New Sets picker
   POST /api/setpicks            → high-impact cards from one set for this deck
   POST /api/recentpicks         → high-impact cards from the newest few sets (Built decks)
+  POST /api/staples             → EDHREC staples (≥ N% of the commander's decks) the deck is missing
+  POST /api/swaps               → cheaper same-role replacements for cards over the Brewing cap
   POST /api/cache/clear         → drop cached Scryfall/EDHREC data and the CK price list
   GET  /api/status              → health check
 """
@@ -27,7 +29,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend import cache, cardkingdom, edhrec, importer, scryfall, setpicks
+from backend import budget, cache, cardkingdom, edhrec, importer, scryfall, setpicks, swaps
 from backend.config import load_settings, save_settings
 from backend.decklist import parse_decklist
 from backend.pricing import price_cards
@@ -53,6 +55,19 @@ class EdhrecRequest(BaseModel):
     status: str = ""    # "brewing" = only suggest cards under the budget cap
 
 
+class StaplesRequest(BaseModel):
+    decklist: str = ""
+    commanders: List[str] = []
+    variant: str = ""
+    status: str = ""
+    min_pct: Optional[float] = None   # defaults to edhrec.staples_min_pct
+
+
+class SwapsRequest(BaseModel):
+    decklist: str = ""
+    commanders: List[str] = []
+
+
 class ImportRequest(BaseModel):
     url: str
 
@@ -74,6 +89,7 @@ class UpdateSettingsRequest(BaseModel):
     skip_basic_lands: bool = True
     tie_goes_to: str = "cardkingdom"
     min_inclusion_pct: float = 0
+    staples_min_pct: float = 30
     budget_max_usd: float = 5.0
     recent_sets: int = 3
 
@@ -97,7 +113,8 @@ def post_settings(req: UpdateSettingsRequest):
         skip_basic_lands=req.skip_basic_lands,
         tie_goes_to=req.tie_goes_to,
     )
-    settings["edhrec"].update(min_inclusion_pct=max(0.0, req.min_inclusion_pct))
+    settings["edhrec"].update(min_inclusion_pct=max(0.0, req.min_inclusion_pct),
+                              staples_min_pct=min(100.0, max(0.0, req.staples_min_pct)))
     settings["brewing"].update(budget_max_usd=max(0.0, req.budget_max_usd),
                                recent_sets=min(10, max(1, req.recent_sets)))
     save_settings(settings)
@@ -190,6 +207,45 @@ async def edhrec_suggestions(req: EdhrecRequest):
         result["lists"] = [l for l in result["lists"] if l["cards"]]
         result["missing_count"] = len({c["name"] for l in result["lists"] for c in l["cards"] if not c["in_deck"]})
     return result
+
+
+def _deck_and_commanders(decklist: str, given: List[str]):
+    deck = parse_decklist(decklist)
+    commanders = [c for c in given if c.strip()] or deck.commanders
+    if not commanders:
+        raise HTTPException(400, "Enter a commander, or mark one in the list (a Commander section or *CMDR*)")
+    return deck, commanders
+
+
+@app.post("/api/staples")
+async def staples(req: StaplesRequest):
+    deck, commanders = _deck_and_commanders(req.decklist, req.commanders)
+    settings = load_settings()
+    min_pct = req.min_pct if req.min_pct is not None else float(settings["edhrec"].get("staples_min_pct", 30))
+    try:
+        page = await edhrec.commander_page(commanders, req.variant)
+    except edhrec.EdhrecError as exc:
+        raise HTTPException(404, str(exc))
+    result = edhrec.staples(page, [c.name for c in deck.cards] + commanders, max(0.0, min(100.0, min_pct)))
+    # Staples are worth knowing about even when pricey, so Brewing flags them instead of hiding them.
+    cap = _budget_cap(req.status, settings)
+    result["budget_max_usd"] = cap
+    prices = await budget.budget_prices([c["name"] for c in result["cards"]], settings)
+    for c in result["cards"]:
+        c["budget_price"] = prices.get(c["name"])
+        c["over_budget"] = cap is not None and c["budget_price"] is not None and not budget.within_budget(c["budget_price"], cap)
+    return result
+
+
+@app.post("/api/swaps")
+async def budget_swaps(req: SwapsRequest):
+    deck, commanders = _deck_and_commanders(req.decklist, req.commanders)
+    settings = load_settings()
+    try:
+        return await swaps.budget_swaps([c.name for c in deck.cards], commanders, settings,
+                                        float(settings["brewing"]["budget_max_usd"]))
+    except edhrec.EdhrecError as exc:
+        raise HTTPException(404, str(exc))
 
 
 # ---------------------------------------------------------------------------

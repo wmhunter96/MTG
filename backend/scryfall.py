@@ -51,6 +51,10 @@ def _identity(card: dict) -> dict:
         "oracle_id": card.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
         "type_line": type_line,
         "color_identity": card.get("color_identity") or [],
+        # Rules text + mana value, used to match budget swaps by role.
+        "oracle_text": card.get("oracle_text")
+        or "\n".join(f.get("oracle_text", "") for f in faces),
+        "cmc": card.get("cmc"),
     }
 
 
@@ -63,11 +67,11 @@ def _name_keys(card: dict) -> List[str]:
 
 
 async def resolve_names(names: List[str]) -> Dict[str, Optional[dict]]:
-    """Map each input name to {name, oracle_id, type_line}, or None if unknown."""
+    """Map each input name to {name, oracle_id, type_line, oracle_text, ...}, or None if unknown."""
     out: Dict[str, Optional[dict]] = {}
     pending: List[str] = []
     for n in names:
-        hit = cache.get(f"name2:{normalize_name(n)}", NAME_CACHE_HOURS)
+        hit = cache.get(f"name3:{normalize_name(n)}", NAME_CACHE_HOURS)
         if hit is not None:
             out[n] = hit
         else:
@@ -96,7 +100,7 @@ async def resolve_names(names: List[str]) -> Dict[str, Optional[dict]]:
 
     for n in pending:
         if out.get(n):
-            cache.put(f"name2:{normalize_name(n)}", out[n])
+            cache.put(f"name3:{normalize_name(n)}", out[n])
     return out
 
 

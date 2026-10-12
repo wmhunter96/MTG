@@ -11,7 +11,13 @@ from backend.main import app
 
 SCRY = {
     "sol ring": {"name": "Sol Ring", "oracle_id": "o-sol", "type_line": "Artifact"},
-    "mana crypt": {"name": "Mana Crypt", "oracle_id": "o-crypt", "type_line": "Artifact", "prices": {"usd": "150.00"}},
+    "mana crypt": {"name": "Mana Crypt", "oracle_id": "o-crypt", "type_line": "Artifact", "prices": {"usd": "150.00"},
+                   "cmc": 0, "oracle_text": "{T}: Add {C}{C}."},
+    "mind stone": {"name": "Mind Stone", "oracle_id": "o-stone", "type_line": "Artifact", "prices": {"usd": "0.50"},
+                   "cmc": 2, "oracle_text": "{T}: Add {C}.\n{1}, {T}, Sacrifice Mind Stone: Draw a card."},
+    "pricey bolt": {"name": "Pricey Bolt", "oracle_id": "o-bolt", "type_line": "Instant", "prices": {"usd": "40.00"},
+                    "cmc": 1, "oracle_text": "Pricey Bolt deals 3 damage to any target."},
+    "swap guy": {"name": "Swap Guy", "oracle_id": "o-swap", "type_line": "Legendary Creature", "color_identity": ["R"]},
     "cheap trick": {"name": "Cheap Trick", "oracle_id": "o-trick", "type_line": "Instant", "prices": {"usd": "0.25"}},
     "sol ring guy": {"name": "Sol Ring Guy", "oracle_id": "o-guy", "type_line": "Legendary Creature", "color_identity": ["G"]},
     "forest": {"name": "Forest", "oracle_id": "o-forest", "type_line": "Basic Land — Forest"},
@@ -39,6 +45,13 @@ EDH = {"header": "Sol Ring Guy", "container": {"json_dict": {"cardlists": [
         {"name": "Sol Ring", "url": "/cards/sol-ring", "synergy": 0, "num_decks": 9, "potential_decks": 10},
         {"name": "Mana Crypt", "url": "/cards/mana-crypt", "synergy": 0.1, "num_decks": 5, "potential_decks": 10},
         {"name": "Cheap Trick", "url": "/cards/cheap-trick", "synergy": 0.05, "num_decks": 2, "potential_decks": 10}]}]}}}
+
+EDH_SWAP = {"header": "Swap Guy", "container": {"json_dict": {"cardlists": [
+    {"header": "Top Cards", "tag": "topcards", "cardviews": [
+        {"name": "Mana Crypt", "url": "/cards/mana-crypt", "synergy": 0.0, "num_decks": 60, "potential_decks": 100},
+        {"name": "Mind Stone", "url": "/cards/mind-stone", "synergy": 0.05, "num_decks": 45, "potential_decks": 100},
+        {"name": "Cheap Trick", "url": "/cards/cheap-trick", "synergy": 0.3, "num_decks": 35, "potential_decks": 100},
+        {"name": "Sol Ring", "url": "/cards/sol-ring", "synergy": 0.0, "num_decks": 90, "potential_decks": 100}]}]}}}
 
 SETS = [
     {"code": "new", "name": "Newest Set", "released_at": "2026-09-01", "set_type": "expansion", "card_count": 3},
@@ -79,6 +92,8 @@ def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=CK)
     if host == "json.edhrec.com" and path == "/pages/commanders/sol-ring-guy.json":
         return httpx.Response(200, json=EDH)
+    if host == "json.edhrec.com" and path == "/pages/commanders/swap-guy.json":
+        return httpx.Response(200, json=EDH_SWAP)
     if host == "json.edhrec.com" and path == "/pages/sets/new.json":
         return httpx.Response(200, json=EDH_SET)
     if host == "api.scryfall.com" and path == "/sets":
@@ -161,3 +176,36 @@ def test_brewing_budget_and_built_recent_picks():
     # Brewing on a single set applies the same cap.
     brewing_set = client.post("/api/setpicks", json={"set": "new", "decklist": deck, "status": "brewing"}).json()
     assert brewing_set["picks"] == []
+
+
+def test_missing_staples():
+    deck = "1 Swap Guy *CMDR*\n1 Sol Ring"
+    r = client.post("/api/staples", json={"decklist": deck, "min_pct": 40})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Sol Ring is in the deck, Cheap Trick is under 40%; Mind Stone has the higher synergy.
+    assert [c["name"] for c in body["cards"]] == ["Mind Stone", "Mana Crypt"]
+    assert body["budget_max_usd"] is None and not body["cards"][1]["over_budget"]
+
+    # Default threshold (30%) and Brewing flags pricey staples instead of hiding them.
+    body = client.post("/api/staples", json={"decklist": deck, "status": "brewing"}).json()
+    assert body["min_inclusion_pct"] == 30
+    flags = {c["name"]: c["over_budget"] for c in body["cards"]}
+    assert flags == {"Cheap Trick": False, "Mind Stone": False, "Mana Crypt": True}
+    assert client.post("/api/staples", json={"decklist": "1 Sol Ring"}).status_code == 400
+
+
+def test_budget_swaps():
+    deck = "1 Swap Guy *CMDR*\n1 Mana Crypt\n1 Pricey Bolt\n1 Sol Ring"
+    r = client.post("/api/swaps", json={"decklist": deck})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["budget_max_usd"] == 5.0
+    cards = {c["name"]: c for c in body["cards"]}
+    assert list(cards) == ["Mana Crypt", "Pricey Bolt"]   # Sol Ring ($1.49) is under the cap
+    crypt = cards["Mana Crypt"]
+    assert crypt["roles"] == ["ramp"]
+    assert [s["name"] for s in crypt["swaps"]] == ["Mind Stone"]   # same job; Cheap Trick isn't ramp
+    assert crypt["saves"] == 149.5
+    assert cards["Pricey Bolt"]["swaps"] == []   # nothing cheap on the page does removal
+    assert body["potential_savings"] == 149.5 and body["over_cap_total"] == 190.0

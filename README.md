@@ -14,10 +14,24 @@ Paste a list, or drop in a **Moxfield** or **Archidekt** deck link and press **F
 
 Each deck has a **Built / Brewing** switch (remembered per commander in your browser):
 
-- **🏰 Built** (you own the deck): Brew Ideas shows the **best new cards from the newest few sets** (3 by default) as a card grid, ranked the same way as the New Sets tab. You can still switch it to show every EDHREC suggestion.
-- **⚗ Brewing** (still buying): Brew Ideas and New Sets only suggest cards at or under your **max price per card** ($5 by default), using the cheaper of Card Kingdom's lowest in-stock price and TCGplayer's market price. Bargains flags deck cards that cost more than the cap.
+- **🏰 Built** (you own the deck): Brew Ideas shows the **best new cards from the newest few sets** (3 by default) as a card grid, ranked the same way as the New Sets tab. You can switch it to **Missing staples** or every EDHREC suggestion.
+- **⚗ Brewing** (still buying): Brew Ideas and New Sets only suggest cards at or under your **max price per card** ($5 by default), using the cheaper of Card Kingdom's lowest in-stock price and TCGplayer's market price. Bargains flags deck cards that cost more than the cap, and Brew Ideas opens on **Cheaper swaps** for them.
 
 Both numbers live in Settings.
+
+### Missing staples (Brew Ideas tab)
+
+Cards that at least **30%** of your commander's EDHREC decks run (change the % right there or in Settings) and yours doesn't, ranked by synergy, with prices. Brewing decks see staples over the price cap too, with the price in red, since a staple is worth knowing about even when it's pricey.
+
+### Cheaper swaps (Brew Ideas tab, Brewing decks)
+
+Every card in the deck over the Brewing price cap gets up to **3 cheaper replacements that do the same job**:
+
+- Candidates come from your commander's EDHREC page and its Budget page, minus cards already in the deck, at or under the cap
+- Each card is tagged by what it does (ramp, card draw, removal, board wipe, counterspell, tutor, recursion, protection, tokens, land) from its rules text; swaps must share a job with the card they replace, and lands only swap for lands
+- Ties go to the same card type and mana value, then to how many of the commander's decks run it
+- Totals show what the over-cap cards cost and how much the cheapest swap for each would save
+- Bargains has a **Find cheaper swaps** button when it flags cards over the cap
 
 ### Best price per card (Bargains tab)
 

@@ -53,5 +53,8 @@ def _defaults() -> dict:
             # Hide EDHREC suggestions that appear in fewer than this % of the
             # commander's decks (0 = show everything).
             "min_inclusion_pct": 0,
+            # "Missing staples" lists cards at least this % of the commander's
+            # decks run that yours doesn't.
+            "staples_min_pct": 30,
         },
     }

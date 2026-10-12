@@ -122,3 +122,18 @@ async def set_page(code: str) -> Optional[dict]:
 def cardviews(data: dict) -> Iterable[dict]:
     for cl in ((data.get("container") or {}).get("json_dict") or {}).get("cardlists") or []:
         yield from cl.get("cardviews") or []
+
+
+def staples(page: dict, deck_names: Iterable[str], min_inclusion_pct: float) -> dict:
+    """Cards at least `min_inclusion_pct`% of the commander's decks run that this deck doesn't."""
+    found = suggestions(page, deck_names, min_inclusion_pct)
+    seen, cards = set(), []
+    for lst in found["lists"]:
+        for c in lst["cards"]:
+            key = normalize_name(c["name"])
+            if c["in_deck"] or key in seen or c["inclusion_pct"] is None:
+                continue
+            seen.add(key)
+            cards.append({**c, "list": lst["header"]})
+    cards.sort(key=lambda c: (c["synergy_pct"] if c["synergy_pct"] is not None else -999, c["inclusion_pct"]), reverse=True)
+    return {"commander": found["commander"], "url": found["url"], "min_inclusion_pct": min_inclusion_pct, "cards": cards}
