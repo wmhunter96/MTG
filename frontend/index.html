@@ -180,6 +180,8 @@
   .hover-card { cursor: default; border-bottom: 1px dotted var(--muted); }
 
   /* ── Built / Brewing switch ── */
+  .base-pick { align-items: center; gap: 10px; flex-wrap: wrap; }
+  .base-pick select { width: auto; max-width: 100%; }
   .status-switch { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg-deep); border: 1px solid var(--border); border-radius: 999px; padding: 4px; gap: 4px; }
   .status-switch button { border: none; background: none; color: var(--muted); font-family: var(--script); font-size: 17px; padding: 7px 10px; border-radius: 999px; cursor: pointer; transition: all 0.2s; line-height: 1.1; }
   .status-switch button small { display: block; font-family: var(--sans); font-size: 11px; opacity: 0.8; }
@@ -528,7 +530,7 @@ $('import-btn').addEventListener('click', async () => {
     store.set('decklist', d.decklist); store.set('deck-url', url);
     $('commander').dataset.touched = '';
     if (d.commanders.length) $('commander').value = d.commanders.join(' + ');
-    loadedDeckId = ''; store.set('library-deck', '');
+    loadedDeckId = ''; store.set('library-deck', ''); checkBaseId = null;
     summarizeDeck();
     toast(`Fetched ${d.name || 'your deck'}`);
   } catch (err) {
@@ -968,6 +970,7 @@ function renderGrid(rootId, d, title, rerender, note = '') {
 let library = null;
 let lastCheck = null;
 let loadedDeckId = store.get('library-deck') || '';
+let checkBaseId = null;   // base deck picked for a deck that isn't saved; null = use the saved one
 const sameCmdrs = (a, b) => {
   const norm = (xs) => xs.map(x => x.toLowerCase().trim()).filter(Boolean).sort().join('|');
   return norm(a) !== '' && norm(a) === norm(b);
@@ -977,6 +980,8 @@ const libraryDeck = () => library && (library.decks.find(d => d.id === loadedDec
 async function loadLibrary() {
   try { library = await api('/api/collection'); renderLibrary(); } catch (err) { $('col-error').textContent = err.message; }
 }
+
+const baseName = (d) => { const b = d.base_id && library.decks.find(x => x.id === d.base_id); return b ? b.name : ''; };
 
 function renderLibrary() {
   const c = library.collection;
@@ -990,7 +995,7 @@ function renderLibrary() {
     ${decks.length ? `<div class="list-block">${decks.map(d => `
       <div class="deck-row" data-id="${esc(d.id)}">
         <div class="grow"><b>${d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>` : esc(d.name)}</b>
-          <div class="sub">${esc(d.commanders.join(' + ') || 'no commander')} · ${d.count} cards</div></div>
+          <div class="sub">${esc(d.commanders.join(' + ') || 'no commander')} · ${d.count} cards${baseName(d) ? ` · 🧪 testing copy of ${esc(baseName(d))}` : ''}</div></div>
         <div class="status-switch" role="radiogroup">
           <button type="button" data-set="built" class="${d.status === 'built' ? 'on' : ''}">🏰 Built</button>
           <button type="button" data-set="brewing" class="${d.status === 'brewing' ? 'on' : ''}">⚗ Brewing</button>
@@ -1024,7 +1029,7 @@ function renderLibrary() {
       $('deck-url').value = d.url || ''; store.set('deck-url', d.url || '');
       $('commander').dataset.touched = '';
       $('commander').value = d.commanders.join(' + ');
-      loadedDeckId = id; store.set('library-deck', id);
+      loadedDeckId = id; store.set('library-deck', id); checkBaseId = null;
       if (d.commanders.length) store.set(statusKey(), d.status);
       summarizeDeck(); renderStatus();
       toast(`Loaded ${d.name}`);
@@ -1126,6 +1131,10 @@ $('col-save').addEventListener('click', () => {
         library = await api(`/api/collection/decks/${encodeURIComponent(existing.id)}`, { method: 'DELETE' });
       }
       loadedDeckId = library.saved; store.set('library-deck', loadedDeckId);
+      if (checkBaseId) {   // picked a base deck before saving: remember it now
+        library = await api(`/api/collection/decks/${encodeURIComponent(loadedDeckId)}`, { method: 'POST', body: JSON.stringify({ base_id: checkBaseId }) });
+        checkBaseId = null;
+      }
       renderLibrary();
       toast(`Saved as ${deckStatus() === 'built' ? 'Built' : 'Brewing'}`);
     } catch (err) { $('col-error').textContent = err.message; }
@@ -1136,7 +1145,8 @@ async function runCheck() {
   $('check-error').textContent = '';
   try {
     lastCheck = await api('/api/collection/check', { method: 'POST', body: JSON.stringify({
-      decklist: $('decklist').value, commanders: commanders(), deck_id: loadedDeckId }) });
+      decklist: $('decklist').value, commanders: commanders(), deck_id: loadedDeckId,
+      ...(checkBaseId !== null ? { base_id: checkBaseId } : {}) }) });
     renderCheck();
   } catch (err) { $('check-error').textContent = err.message; }
 }
@@ -1144,6 +1154,19 @@ $('col-check').addEventListener('click', () => {
   if (!$('decklist').value.trim()) return toast('Paste or fetch a deck first');
   busy($('col-check'), 'Checking…', runCheck);
 });
+
+// Testing copy of a deck you own? Ignore the real deck, so its cards count as on hand.
+function baseRow(r) {
+  const decks = (library ? library.decks : []).filter(d => !r.matched_deck || d.id !== r.matched_deck.id);
+  if (!decks.length) return '';
+  const cur = r.base_deck ? r.base_deck.id : '';
+  return `<div class="row base-pick"><label class="check" for="check-base">🧪 Ignore base deck</label>
+    <select id="check-base" title="Testing an upgrade of a deck you own? Pick the real deck so its cards count as available.">
+      <option value="">None</option>
+      ${decks.map(d => `<option value="${esc(d.id)}" ${d.id === cur ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+    </select>
+    ${r.base_deck ? `<span class="sub">${esc(r.base_deck.name)}'s cards count as yours to use${r.matched_deck ? '' : ' (save this deck to remember)'}.</span>` : ''}</div>`;
+}
 
 function renderCheck() {
   const r = lastCheck;
@@ -1160,6 +1183,7 @@ function renderCheck() {
       <div class="tile"><div class="k">Own, but in another deck</div><div class="v">${r.in_use}</div><div class="s">across ${r.built_decks} other Built deck${r.built_decks === 1 ? '' : 's'}</div></div>
       <div class="tile"><div class="k">Don't own</div><div class="v">${r.missing}</div><div class="s">${r.have} already on hand</div></div>
     </div>
+    ${baseRow(r)}
     <div class="hint">${r.matched_deck ? `Checking as <b>${esc(r.matched_deck.name)}</b> from your decks, so its own cards aren't counted against it.` : ''} Basic lands skipped${r.skipped_basics ? ` (${r.skipped_basics})` : ''}.</div>
     ${toBuy.length ? `<div class="row">
       <button class="btn small" id="check-price">🪙 Price the ${toBuy.length} I need</button>
@@ -1175,6 +1199,20 @@ function renderCheck() {
     ${have.length ? `<details class="list-block"><summary>On hand <span class="sub">${have.length}</span></summary>
       <table><tbody>${have.map(x => `<tr class="owned"><td>${nameCell(x)}</td><td>${x.used_in.length ? `<span class="sub">also in ${usedIn(x)}</span>` : ''}</td><td class="num">${x.qty} of ${x.owned}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
   const list = toBuy.map(x => `${x.need} ${x.name}`).join('\n');
+  const pick = $('check-base');
+  if (pick) pick.addEventListener('change', async () => {
+    pick.disabled = true;
+    try {
+      if (r.matched_deck) {
+        library = await api(`/api/collection/decks/${encodeURIComponent(r.matched_deck.id)}`, { method: 'POST', body: JSON.stringify({ base_id: pick.value }) });
+        renderLibrary();
+        checkBaseId = null;
+      } else {
+        checkBaseId = pick.value;
+      }
+      await runCheck();
+    } catch (err) { $('check-error').textContent = err.message; pick.disabled = false; }
+  });
   if (toBuy.length) {
     $('check-price').addEventListener('click', () => { showTab('prices'); runPrices(list); });
     $('check-copy').addEventListener('click', () => navigator.clipboard.writeText(list)

@@ -89,3 +89,58 @@ def test_status_kept_on_reimport_and_conflicts():
     collection.update_deck("b", status="built")
     c = collection.summary()["conflicts"]
     assert [(x["name"], x["owned"], x["needed"]) for x in c] == [("Sol Ring", 1, 2)]
+
+
+def test_testing_copy_ignores_its_base_deck():
+    _library()
+    collection.upsert_decks([{"id": "b2", "name": "Elves upgrade", "commanders": ["Lathril, Blade of the Elves"],
+                              "status": "brewing",
+                              "decklist": "1 Lathril, Blade of the Elves *CMDR*\n1 Sol Ring\n1 Llanowar Elves\n1 Mana Crypt"}])
+    upgrade = "1 Lathril, Blade of the Elves *CMDR*\n1 Sol Ring\n1 Llanowar Elves\n1 Mana Crypt"
+    # Without a base deck, the real Elves deck holds Llanowar Elves.
+    r = collection.check_deck(upgrade, [], "b2")
+    rows = {x["name"]: x for x in r["rows"]}
+    assert r["base_deck"] is None and rows["Llanowar Elves"]["state"] == "in_use"
+
+    collection.update_deck("b2", base_id="b")
+    r = collection.check_deck(upgrade, [], "b2")
+    rows = {x["name"]: x for x in r["rows"]}
+    assert r["base_deck"] == {"id": "b", "name": "Elves"}
+    assert rows["Llanowar Elves"]["state"] == "have"
+    assert [u["deck"] for u in rows["Sol Ring"]["used_in"]] == ["Valgavoth"]   # other decks still count
+    assert rows["Mana Crypt"]["state"] == "missing"
+    # "" turns it off for one check without unlinking.
+    r = collection.check_deck(upgrade, [], "b2", base_id="")
+    assert r["base_deck"] is None
+    # Re-importing keeps the link.
+    collection.upsert_decks([{"id": "b2", "name": "Elves upgrade", "commanders": [], "decklist": "1 Sol Ring"}])
+    assert next(d for d in collection.load()["decks"] if d["id"] == "b2")["base_id"] == "b"
+
+
+def test_base_deck_picked_for_unsaved_deck():
+    _library()
+    r = collection.check_deck("1 Sol Ring\n1 Llanowar Elves", ["Lathril, Blade of the Elves"], base_id="b")
+    rows = {x["name"]: x for x in r["rows"]}
+    assert r["matched_deck"] is None and r["base_deck"]["name"] == "Elves"
+    assert rows["Llanowar Elves"]["state"] == "have"
+
+
+def test_testing_copy_holds_no_cards_and_link_validated():
+    _library()
+    collection.upsert_decks([{"id": "a2", "name": "Valgavoth test", "commanders": ["Valgavoth, Harrower of Souls"],
+                              "decklist": "1 Sol Ring\n1 Arcane Signet"}])
+    collection.update_deck("a2", base_id="a")
+    # The Built testing copy doesn't fight its base (or anyone) for cards.
+    assert [x["name"] for x in collection.summary()["conflicts"]] == ["Sol Ring"]
+    r = collection.check_deck("1 Sol Ring", ["Kenrith, the Returned King"])
+    assert [u["deck"] for u in r["rows"][0]["used_in"]] == ["Valgavoth", "Elves"]
+    import pytest
+    with pytest.raises(collection.CollectionError):
+        collection.update_deck("a2", base_id="a2")
+    with pytest.raises(collection.CollectionError):
+        collection.update_deck("a2", base_id="nope")
+    collection.delete_deck("a")
+    assert "base_id" not in next(d for d in collection.load()["decks"] if d["id"] == "a2")
+    collection.update_deck("a2", base_id="b")
+    collection.update_deck("a2", base_id="")
+    assert "base_id" not in next(d for d in collection.load()["decks"] if d["id"] == "a2")
