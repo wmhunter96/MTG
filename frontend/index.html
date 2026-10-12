@@ -187,6 +187,15 @@
   .status-switch button:not(.on):hover { color: var(--text); }
   .over-budget { color: var(--danger); }
 
+  tr.in-use td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+  .deck-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px dashed rgba(107,74,43,0.6); }
+  .deck-row:last-child { border-bottom: none; }
+  .deck-row .grow { min-width: 200px; }
+  .deck-row .status-switch { width: 190px; padding: 2px; }
+  .deck-row .status-switch button { font-size: 14px; padding: 4px 8px; }
+  details.paste summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  details.paste textarea { min-height: 120px; margin-top: 8px; }
+
   .tab { display: none; }
   .tab.active { display: contents; }
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface-2); border: 1px solid var(--gold); color: var(--text); padding: 10px 16px; border-radius: 999px; font-size: 14px; font-weight: 700; opacity: 0; transform: translateY(8px); transition: all 0.25s; pointer-events: none; }
@@ -204,6 +213,7 @@
     <button data-tab="prices" class="active">🪙 Bargains</button>
     <button data-tab="edhrec">🔮 Brew Ideas</button>
     <button data-tab="sets">✨ New Sets</button>
+    <button data-tab="collection">📦 Collection</button>
     <button data-tab="settings">⚙ Settings</button>
   </nav>
   <span class="twinkle" style="left:38%;top:14px">✦</span>
@@ -280,6 +290,39 @@
       <button class="btn" id="sets-btn">✨ Find high-impact cards</button>
     </div>
 
+    <div class="tab" data-pane="collection">
+      <div class="section-label">Your Collection</div>
+      <div class="field">
+        <label for="col-url">Archidekt collection link</label>
+        <div class="row">
+          <input type="url" id="col-url" class="grow" placeholder="https://archidekt.com/collection/v2/…" />
+          <button class="btn small" id="col-import">Import</button>
+        </div>
+        <details class="paste">
+          <summary>…or paste / upload a CSV export</summary>
+          <textarea id="col-text" spellcheck="false" placeholder="Quantity,Name,Finish,…&#10;2,Sol Ring,Normal,…&#10;&#10;or plain lines: 2 Sol Ring"></textarea>
+          <div class="row" style="margin-top:8px">
+            <input type="file" id="col-file" accept=".csv,.txt,text/csv,text/plain" style="font-size:13px; color:var(--muted)" />
+            <button class="btn small" id="col-paste">Import pasted</button>
+          </div>
+        </details>
+        <div class="hint" id="col-summary">Count every copy you own, including ones sleeved in decks. Importing replaces the last import.</div>
+        <div id="col-error" class="error"></div>
+      </div>
+      <div class="section-label">Your Decks</div>
+      <div class="field">
+        <label for="col-user">Archidekt username</label>
+        <div class="row">
+          <input type="text" id="col-user" class="grow" placeholder="wmhunter96" />
+          <button class="btn small" id="col-decks">Import decks</button>
+        </div>
+        <div class="hint">Pulls in every public deck as 🏰 Built. Flip any that are still on paper to ⚗ Brewing; re-importing keeps your choices.</div>
+        <button class="btn ghost small" id="col-save" style="align-self:flex-start">＋ Save the deck above to my decks</button>
+      </div>
+      <button class="btn" id="col-check">📦 What do I need to buy?</button>
+      <div class="hint">Checks the deck above against your collection. Cards in your other Built decks don't count as spare.</div>
+    </div>
+
     <div class="tab" data-pane="settings">
       <div class="hint">Settings apply to new lookups. Your deck stays in this browser.</div>
     </div>
@@ -304,6 +347,12 @@
     <div class="tab" data-pane="sets">
       <div id="sets-error" class="error"></div>
       <div id="sets-results"><div class="empty"><span class="big">✨</span>Pick a set and press <b>Find high-impact cards</b><br>to see what's worth cracking packs for.</div></div>
+    </div>
+
+    <div class="tab" data-pane="collection">
+      <div id="check-error" class="error"></div>
+      <div id="check-results"><div class="empty"><span class="big">📦</span>Import your collection and decks, then press <b>What do I need to buy?</b><br>We'll tell you which cards are already spoken for by another deck.</div></div>
+      <div id="library"></div>
     </div>
 
     <div class="tab" data-pane="settings">
@@ -387,7 +436,7 @@ const statusKey = () => 'status:' + (commanders().join('+').toLowerCase() || 'de
 function deckStatus() { return store.get(statusKey()) || 'brewing'; }
 function renderStatus() {
   const st = deckStatus();
-  document.querySelectorAll('.status-switch button').forEach(b => {
+  document.querySelectorAll('#left-deck .status-switch button').forEach(b => {
     b.classList.toggle('on', b.dataset.status === st);
     b.setAttribute('aria-checked', b.dataset.status === st);
   });
@@ -422,10 +471,11 @@ function renderBrewViews() {
   $('edhrec-btn').textContent = view === 'swaps' ? '⚗ Find cheaper swaps' : view === 'staples' ? '🔮 Find missing staples' : '🔮 Find cards to add';
 }
 $('brew-view').addEventListener('change', () => { store.set('view:' + deckStatus(), $('brew-view').value); renderBrewViews(); });
-document.querySelectorAll('.status-switch button').forEach(b => b.addEventListener('click', () => {
+document.querySelectorAll('#left-deck .status-switch button').forEach(b => b.addEventListener('click', () => {
   store.set(statusKey(), b.dataset.status);
   renderStatus();
   if (lastPrices) renderPrices();
+  syncLibraryStatus(b.dataset.status);
 }));
 
 // ── Tabs ──
@@ -433,8 +483,9 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('active', p.dataset.pane === name));
   document.querySelectorAll('.deck-part').forEach(el => el.style.display = name === 'settings' ? 'none' : '');
-  document.querySelector('.cmdr-field').style.display = (name === 'edhrec' || name === 'sets') ? '' : 'none';
+  document.querySelector('.cmdr-field').style.display = (name === 'edhrec' || name === 'sets' || name === 'collection') ? '' : 'none';
   if (name === 'settings') loadSettings();
+  if (name === 'collection') loadLibrary();
   if (name === 'sets') loadSets();
   store.set('tab', name);
 }
@@ -471,6 +522,7 @@ $('import-btn').addEventListener('click', async () => {
     store.set('decklist', d.decklist); store.set('deck-url', url);
     $('commander').dataset.touched = '';
     if (d.commanders.length) $('commander').value = d.commanders.join(' + ');
+    loadedDeckId = ''; store.set('library-deck', '');
     summarizeDeck();
     toast(`Fetched ${d.name || 'your deck'}`);
   } catch (err) {
@@ -905,6 +957,207 @@ function renderGrid(rootId, d, title, rerender, note = '') {
   bindPicks(root, root.querySelector('.price-picked'));
 }
 
+
+// ── Collection + deck library ──
+let library = null;
+let lastCheck = null;
+let loadedDeckId = store.get('library-deck') || '';
+const sameCmdrs = (a, b) => {
+  const norm = (xs) => xs.map(x => x.toLowerCase().trim()).filter(Boolean).sort().join('|');
+  return norm(a) !== '' && norm(a) === norm(b);
+};
+const libraryDeck = () => library && (library.decks.find(d => d.id === loadedDeckId) || library.decks.find(d => sameCmdrs(d.commanders, commanders())));
+
+async function loadLibrary() {
+  try { library = await api('/api/collection'); renderLibrary(); } catch (err) { $('col-error').textContent = err.message; }
+}
+
+function renderLibrary() {
+  const c = library.collection;
+  $('col-summary').textContent = c.total
+    ? `${c.total} cards (${c.unique} unique), imported ${new Date(c.imported_at).toLocaleString()}. Importing again replaces it.`
+    : 'Count every copy you own, including ones sleeved in decks. Importing replaces the last import.';
+  const decks = library.decks;
+  const conflicts = library.conflicts;
+  $('library').innerHTML = `
+    <div class="section-label">My Decks (${decks.length})</div>
+    ${decks.length ? `<div class="list-block">${decks.map(d => `
+      <div class="deck-row" data-id="${esc(d.id)}">
+        <div class="grow"><b>${d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>` : esc(d.name)}</b>
+          <div class="sub">${esc(d.commanders.join(' + ') || 'no commander')} · ${d.count} cards</div></div>
+        <div class="status-switch" role="radiogroup">
+          <button type="button" data-set="built" class="${d.status === 'built' ? 'on' : ''}">🏰 Built</button>
+          <button type="button" data-set="brewing" class="${d.status === 'brewing' ? 'on' : ''}">⚗ Brewing</button>
+        </div>
+        <button class="btn ghost small" data-load>Load</button>
+        <button class="btn ghost small" data-del title="Remove from my decks">✕</button>
+      </div>`).join('')}</div>`
+      : '<div class="hint">No decks yet. Import them from Archidekt or save the one above.</div>'}
+    ${conflicts.length ? `<div class="section-label">Shared between Built decks (${conflicts.length})</div>
+      <div class="hint">Your Built decks together run more copies of these than your collection has, so one deck is borrowing from another.</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Card</th><th class="num">Own</th><th class="num">Decks run</th><th>In</th></tr></thead>
+        <tbody>${conflicts.map(x => `<tr>
+          <td><span class="hover-card" data-card="${esc(x.name)}">${esc(x.name)}</span></td>
+          <td class="num">${x.owned}</td><td class="num">${x.needed}</td>
+          <td>${x.used_in.map(u => esc(u.deck) + (u.qty > 1 ? ` ×${u.qty}` : '')).join(', ')}</td></tr>`).join('')}</tbody>
+      </table></div>` : ''}`;
+
+  $('library').querySelectorAll('.deck-row').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelectorAll('[data-set]').forEach(b => b.addEventListener('click', async () => {
+      library = await api(`/api/collection/decks/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ status: b.dataset.set }) });
+      const d = library.decks.find(x => x.id === id);
+      if (d && d.commanders.length) store.set('status:' + d.commanders.join('+').toLowerCase(), d.status);
+      renderLibrary(); renderStatus();
+      if (lastCheck) runCheck();
+    }));
+    row.querySelector('[data-load]').addEventListener('click', () => {
+      const d = library.decks.find(x => x.id === id);
+      $('decklist').value = d.decklist; store.set('decklist', d.decklist);
+      $('deck-url').value = d.url || ''; store.set('deck-url', d.url || '');
+      $('commander').dataset.touched = '';
+      $('commander').value = d.commanders.join(' + ');
+      loadedDeckId = id; store.set('library-deck', id);
+      if (d.commanders.length) store.set(statusKey(), d.status);
+      summarizeDeck(); renderStatus();
+      toast(`Loaded ${d.name}`);
+    });
+    row.querySelector('[data-del]').addEventListener('click', async () => {
+      const d = library.decks.find(x => x.id === id);
+      if (!confirm(`Remove ${d.name} from your decks? (It stays on Archidekt.)`)) return;
+      library = await api(`/api/collection/decks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (loadedDeckId === id) { loadedDeckId = ''; store.set('library-deck', ''); }
+      renderLibrary();
+    });
+  });
+}
+
+async function syncLibraryStatus(status) {
+  if (!library) return;
+  const d = libraryDeck();
+  if (!d || d.status === status) return;
+  try {
+    library = await api(`/api/collection/decks/${encodeURIComponent(d.id)}`, { method: 'POST', body: JSON.stringify({ status }) });
+    renderLibrary();
+  } catch {}
+}
+
+async function busy(btn, label, fn) {
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  try { await fn(); } finally { btn.disabled = false; btn.textContent = old; }
+}
+
+async function importCollection(body) {
+  $('col-error').textContent = '';
+  try {
+    library = await api('/api/collection/import', { method: 'POST', body: JSON.stringify(body) });
+    renderLibrary();
+    toast(`Imported ${library.collection.total} cards`);
+    if (lastCheck) runCheck();
+  } catch (err) { $('col-error').textContent = err.message; }
+}
+$('col-url').value = store.get('col-url') || '';
+$('col-user').value = store.get('col-user') || '';
+$('col-import').addEventListener('click', () => {
+  const url = $('col-url').value.trim();
+  if (!url) return toast('Paste your Archidekt collection link first');
+  store.set('col-url', url);
+  busy($('col-import'), 'Importing…', () => importCollection({ url }));
+});
+$('col-paste').addEventListener('click', () => {
+  if (!$('col-text').value.trim()) return toast('Paste or choose a CSV export first');
+  busy($('col-paste'), 'Importing…', () => importCollection({ text: $('col-text').value }));
+});
+$('col-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (f) $('col-text').value = await f.text();
+});
+$('col-decks').addEventListener('click', () => {
+  const username = $('col-user').value.trim();
+  if (!username) return toast('Enter your Archidekt username first');
+  store.set('col-user', username);
+  $('col-error').textContent = '';
+  busy($('col-decks'), 'Importing…', async () => {
+    try {
+      library = await api('/api/collection/decks/import', { method: 'POST', body: JSON.stringify({ username }) });
+      renderLibrary();
+      toast(`Imported ${library.imported} deck${library.imported === 1 ? '' : 's'}`);
+    } catch (err) { $('col-error').textContent = err.message; }
+  });
+});
+$('col-save').addEventListener('click', () => {
+  if (!$('decklist').value.trim()) return toast('Paste or fetch a deck first');
+  $('col-error').textContent = '';
+  busy($('col-save'), 'Saving…', async () => {
+    try {
+      const url = $('deck-url').value.trim();
+      const existing = libraryDeck();
+      library = await api('/api/collection/decks', { method: 'POST', body: JSON.stringify({
+        decklist: $('decklist').value, commanders: commanders(), status: deckStatus(),
+        name: existing ? existing.name : '',
+        url: /archidekt\.com\/(api\/)?decks\/\d+/.test(url) ? url : '' }) });
+      if (existing && existing.id !== library.saved) {
+        library = await api(`/api/collection/decks/${encodeURIComponent(existing.id)}`, { method: 'DELETE' });
+      }
+      loadedDeckId = library.saved; store.set('library-deck', loadedDeckId);
+      renderLibrary();
+      toast(`Saved as ${deckStatus() === 'built' ? 'Built' : 'Brewing'}`);
+    } catch (err) { $('col-error').textContent = err.message; }
+  });
+});
+
+async function runCheck() {
+  $('check-error').textContent = '';
+  try {
+    lastCheck = await api('/api/collection/check', { method: 'POST', body: JSON.stringify({
+      decklist: $('decklist').value, commanders: commanders(), deck_id: loadedDeckId }) });
+    renderCheck();
+  } catch (err) { $('check-error').textContent = err.message; }
+}
+$('col-check').addEventListener('click', () => {
+  if (!$('decklist').value.trim()) return toast('Paste or fetch a deck first');
+  busy($('col-check'), 'Checking…', runCheck);
+});
+
+function renderCheck() {
+  const r = lastCheck;
+  const inUse = r.rows.filter(x => x.state === 'in_use');
+  const missing = r.rows.filter(x => x.state === 'missing');
+  const have = r.rows.filter(x => x.state === 'have');
+  const toBuy = r.rows.filter(x => x.need > 0);
+  const usedIn = (x) => x.used_in.map(u => `<b>${esc(u.deck)}</b>${u.qty > 1 ? ` ×${u.qty}` : ''}`).join(', ');
+  const nameCell = (x) => `<span class="hover-card" data-card="${esc(x.name)}">${esc(x.name)}</span>`;
+  $('check-results').innerHTML = `
+    ${!r.has_collection ? '<div class="hint">⚠ No collection imported yet, so every card counts as missing. Import it on the left.</div>' : ''}
+    <div class="tiles">
+      <div class="tile best"><div class="k">To buy</div><div class="v">${r.to_buy}</div><div class="s">${toBuy.length} card${toBuy.length === 1 ? '' : 's'}</div></div>
+      <div class="tile"><div class="k">Own, but in another deck</div><div class="v">${r.in_use}</div><div class="s">across ${r.built_decks} other Built deck${r.built_decks === 1 ? '' : 's'}</div></div>
+      <div class="tile"><div class="k">Don't own</div><div class="v">${r.missing}</div><div class="s">${r.have} already on hand</div></div>
+    </div>
+    <div class="hint">${r.matched_deck ? `Checking as <b>${esc(r.matched_deck.name)}</b> from your decks, so its own cards aren't counted against it.` : ''} Basic lands skipped${r.skipped_basics ? ` (${r.skipped_basics})` : ''}.</div>
+    ${toBuy.length ? `<div class="row">
+      <button class="btn small" id="check-price">🪙 Price the ${toBuy.length} I need</button>
+      <button class="btn ghost small" id="check-copy">Copy buy list</button></div>` : ''}
+    ${inUse.length ? `<div class="section-label">You have it, but it's in another deck (${inUse.length})</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Card</th><th class="num">Need</th><th class="num">Own</th><th>Being used in</th></tr></thead>
+        <tbody>${inUse.map(x => `<tr class="in-use"><td>${nameCell(x)}</td><td class="num">${x.need}</td><td class="num">${x.owned}</td>
+          <td>${usedIn(x)}${x.free ? `<div class="sub">${x.free} spare, need ${x.qty}</div>` : ''}</td></tr>`).join('')}</tbody>
+      </table></div>` : ''}
+    ${missing.length ? `<details class="list-block" ${inUse.length ? '' : 'open'}><summary>Not in your collection <span class="sub">${missing.length}</span></summary>
+      <table><tbody>${missing.map(x => `<tr><td>${nameCell(x)}</td><td class="num">${x.need}</td></tr>`).join('')}</tbody></table></details>` : ''}
+    ${have.length ? `<details class="list-block"><summary>On hand <span class="sub">${have.length}</span></summary>
+      <table><tbody>${have.map(x => `<tr class="owned"><td>${nameCell(x)}</td><td>${x.used_in.length ? `<span class="sub">also in ${usedIn(x)}</span>` : ''}</td><td class="num">${x.qty} of ${x.owned}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
+  const list = toBuy.map(x => `${x.need} ${x.name}`).join('\n');
+  if (toBuy.length) {
+    $('check-price').addEventListener('click', () => { showTab('prices'); runPrices(list); });
+    $('check-copy').addEventListener('click', () => navigator.clipboard.writeText(list)
+      .then(() => toast(`Copied ${toBuy.length} cards`), () => toast('Copy failed')));
+  }
+}
+
 // ── Settings ──
 async function loadSettings() {
   const s = await api('/api/settings');
@@ -944,6 +1197,7 @@ $('clear-cache').addEventListener('click', async () => {
 showTab(store.get('tab') || 'prices');
 summarizeDeck();
 loadAppSettings();
+loadLibrary();
 </script>
 </body>
 </html>

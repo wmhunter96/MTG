@@ -33,6 +33,18 @@ Every card in the deck over the Brewing price cap gets up to **3 cheaper replace
 - Totals show what the over-cap cards cost and how much the cheapest swap for each would save
 - Bargains has a **Find cheaper swaps** button when it flags cards over the cap
 
+### What do I need to buy? (Collection tab)
+
+Import your collection and your decks, and the app tells you which cards in the deck you're working on you actually have to buy, including cards you own that are **already sleeved up in another Built deck**:
+
+- **Collection**: paste your Archidekt collection link (it must be public) and press **Import**, or paste / upload a CSV export (Archidekt, Moxfield, Deckbox, anything with quantity and name columns) or a plain `2 Sol Ring` list. Count every copy you own, including the ones in decks. Importing again replaces the old import.
+- **Decks**: enter your Archidekt username and press **Import decks** to pull in every public deck as 🏰 Built. Flip any that are still on paper to ⚗ Brewing; re-importing refreshes the lists and keeps your choices. **Save the deck above** adds whatever deck is in the editor. Built decks hold their cards; Brewing decks don't.
+- **What do I need to buy?** checks the deck in the editor: cards you have a spare copy of, cards you own but whose copies are all in other Built decks (naming those decks), and cards you don't own. If the deck is one of your saved decks (same commander), its own cards aren't counted against it. Basic lands are skipped.
+- **Price the ones I need** sends just the buy list to Bargains.
+- **Shared between Built decks** lists cards your Built decks together run more copies of than you own.
+
+The collection and saved decks live in `/config/collection.json`. Archidekt has no official API, so if a link stops importing, use the CSV export.
+
 ### Best price per card (Bargains tab)
 
 Paste a decklist and get the cheapest copy of every card across **Card Kingdom** and **TCGplayer**:
