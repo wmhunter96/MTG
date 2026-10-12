@@ -6,7 +6,7 @@ import time
 import httpx
 from fastapi.testclient import TestClient
 
-from backend import http
+from backend import http, importer
 from backend.main import app
 
 SCRY = {
@@ -79,11 +79,18 @@ ARCH_COLLECTION = {
 ARCH_USER = {"count": 1, "next": None, "results": [{"id": 42, "name": "Imported", "updatedAt": "2026-10-01T00:00:00Z"}]}
 
 calls = []
+flaky = {"collection": 1, "deck": 0}   # 429s to hand out before answering
 
 
 def handler(req: httpx.Request) -> httpx.Response:
     calls.append(str(req.url))
     host, path = req.url.host, req.url.path
+    if host == "archidekt.com" and path == "/api/collection/99/" and flaky["collection"] > 0:
+        flaky["collection"] -= 1
+        return httpx.Response(429, headers={"Retry-After": "3"})
+    if host == "archidekt.com" and path == "/api/decks/42/" and flaky["deck"] > 0:
+        flaky["deck"] -= 1
+        return httpx.Response(429)
     if host == "api.scryfall.com" and path == "/cards/collection":
         ids = json.loads(req.content)["identifiers"]
         data = [SCRY[i["name"].lower()] for i in ids if i["name"].lower() in SCRY]
@@ -120,6 +127,15 @@ def handler(req: httpx.Request) -> httpx.Response:
 
 
 http._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+importer.archidekt_throttle.interval = 0
+slept = []
+
+
+async def _no_sleep(seconds):
+    slept.append(seconds)
+
+
+http._sleep = _no_sleep
 client = TestClient(app)
 client.__enter__()   # one event loop for the whole module, so background jobs keep running
 
@@ -234,6 +250,7 @@ def test_collection_import_and_need_to_buy():
     assert r.status_code == 200, r.text
     assert r.json()["collection"] == {"source": "https://archidekt.com/collection/v2/99",
                                       "imported_at": r.json()["collection"]["imported_at"], "unique": 3, "total": 4}
+    assert slept[-1] == 3.0   # first page got a 429; waited the Retry-After and carried on
     err = client.post("/api/collection/import", json={"url": "https://archidekt.com/collection/v2/13"})
     assert err.status_code == 400 and "private" in err.json()["detail"]
 
@@ -242,6 +259,9 @@ def test_collection_import_and_need_to_buy():
     assert lib["imported"] == 1
     assert [(d["id"], d["status"], d["commanders"]) for d in lib["decks"]] == [("archidekt-42", "built", ["Sol Ring Guy"])]
     assert client.post("/api/collection/decks/import", json={"username": "nobody"}).status_code == 400
+    # Unchanged on Archidekt, so a re-import doesn't fetch it again.
+    again = client.post("/api/collection/decks/import", json={"username": "wmhunter96"}).json()
+    assert again["imported"] == 0 and again["unchanged"] == 1
 
     check = client.post("/api/collection/check", json={"decklist": "1 Swap Guy *CMDR*\n1 Sol Ring\n1 Mind Stone"}).json()
     rows = {x["name"]: x for x in check["rows"]}
@@ -259,3 +279,18 @@ def test_collection_import_and_need_to_buy():
     csv = client.post("/api/collection/import", json={"text": "Quantity,Name\n3,Sol Ring\n"}).json()
     assert csv["collection"]["total"] == 3
     assert client.delete(f"/api/collection/decks/{saved['saved']}").json()["decks"][0]["id"] == "archidekt-42"
+
+
+def test_archidekt_rate_limit_gives_up_politely():
+    from backend import collection
+    collection._path().unlink(missing_ok=True)
+    flaky["deck"] = 99   # every deck fetch is refused
+    try:
+        r = client.post("/api/collection/decks/import", json={"username": "wmhunter96"})
+        assert r.status_code == 429 and "press Import decks again" in r.json()["detail"]
+        r = client.post("/api/import", json={"url": "https://archidekt.com/decks/42/x"})
+        assert r.status_code == 400 and "slow down" in r.json()["detail"]
+        assert slept[-4:] == [2.0, 4.0, 8.0, 16.0]   # backed off before giving up
+    finally:
+        flaky["deck"] = 0
+    assert client.post("/api/collection/decks/import", json={"username": "wmhunter96"}).json()["imported"] == 1

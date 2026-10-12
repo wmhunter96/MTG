@@ -9,7 +9,10 @@ as a pasted list.
 import re
 from typing import Dict, List, Tuple
 
-from backend.http import client
+from backend.http import Throttle, get_patiently
+
+# Archidekt answers 429 when hit quickly, so every call to it shares one slow lane.
+archidekt_throttle = Throttle(1.0)
 
 
 class ImportError_(Exception):
@@ -77,9 +80,11 @@ def parse_archidekt(data: dict) -> Tuple[str, List[Tuple[int, str]], List[Tuple[
 
 
 async def _get_json(url: str, site: str) -> dict:
-    r = await client().get(url)
+    r = await get_patiently(url, archidekt_throttle if site == "Archidekt" else None)
     if r.status_code == 404:
         raise ImportError_(f"{site} couldn't find that deck. Is it public?")
+    if r.status_code == 429:
+        raise ImportError_(f"{site} is asking us to slow down. Give it a minute and press Fetch again.")
     if r.status_code >= 400:
         raise ImportError_(
             f"{site} refused the request ({r.status_code}). Export the deck as text and paste it instead."

@@ -24,20 +24,23 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from backend import importer
 from backend.config import CONFIG_PATH
 from backend.decklist import normalize_name, parse_decklist
-from backend.http import Throttle, client
+from backend.http import get_patiently
 
 
 class CollectionError(Exception):
     pass
 
 
+class RateLimited(CollectionError):
+    pass
+
+
 _lock = threading.Lock()
-_archidekt = Throttle(0.25)
 MAX_PAGES = 400
 
 _BASICS = {normalize_name(n) for n in (
@@ -156,8 +159,9 @@ def parse_archidekt_collection(data) -> Tuple[List[Tuple[int, str]], Optional[st
 
 
 async def _get(url: str, what: str):
-    await _archidekt.wait()
-    r = await client().get(url)
+    r = await get_patiently(url, importer.archidekt_throttle)
+    if r.status_code == 429:
+        raise RateLimited("Archidekt is asking us to slow down. Give it a minute and try again.")
     if r.status_code == 404:
         raise CollectionError(f"Archidekt couldn't find that {what}. Is it public?")
     if r.status_code in (401, 403):
@@ -215,11 +219,19 @@ def username(ref: str) -> str:
     return ref.strip("/@ ")
 
 
-async def fetch_archidekt_user_decks(user: str) -> List[dict]:
-    """Every public deck an Archidekt user owns, as library entries."""
+async def fetch_archidekt_user_decks(user: str, known: Optional[Dict[str, str]] = None,
+                                     on_deck: Optional[Callable[[dict], None]] = None) -> Tuple[List[dict], int]:
+    """Every public deck an Archidekt user owns, as library entries.
+
+    `known` maps library ids to the Archidekt updatedAt they were fetched at;
+    unchanged decks are skipped (fewer calls, fewer 429s). `on_deck` is called
+    with each deck as it arrives, so a rate limit halfway keeps what came in.
+    Returns (fetched decks, unchanged count).
+    """
     user = username(user)
     if not user or "/" in user:
         raise CollectionError("Enter an Archidekt username (or your profile link).")
+    known = known or {}
     listed, url, pages = [], f"https://archidekt.com/api/decks/cards/?owner={user}&ownerexact=true&pageSize=50", 0
     while url and pages < 20:
         body = await _get(url, "user")
@@ -227,23 +239,38 @@ async def fetch_archidekt_user_decks(user: str) -> List[dict]:
         url, pages = body.get("next"), pages + 1
     if not listed:
         raise CollectionError(f"Archidekt has no public decks for {user}.")
-    decks = []
-    for d in listed:
-        deck_id = d.get("id")
-        if deck_id is None:
+    decks, unchanged = [], 0
+    todo = [d for d in listed if d.get("id") is not None]
+    for d in todo:
+        deck_id, updated = d["id"], d.get("updatedAt") or ""
+        if updated and known.get(f"archidekt-{deck_id}") == updated:
+            unchanged += 1
             continue
-        data = await _get(f"https://archidekt.com/api/decks/{deck_id}/", "deck")
+        try:
+            data = await _get(f"https://archidekt.com/api/decks/{deck_id}/", "deck")
+        except RateLimited:
+            left = len(todo) - len(decks) - unchanged
+            raise RateLimited(f"Archidekt asked us to slow down with {left} deck{'s' if left != 1 else ''} to go. "
+                              f"The {len(decks)} new or changed ones so far are saved; press Import decks again in a minute for the rest.")
         name, commanders, cards = importer.parse_archidekt(data)
         if not cards and not commanders:
             continue
-        decks.append({
+        deck = {
             "id": f"archidekt-{deck_id}",
             "name": name or d.get("name") or f"Deck {deck_id}",
             "url": f"https://archidekt.com/decks/{deck_id}",
             "commanders": [n for _, n in commanders],
             "decklist": importer.to_text(name, commanders, cards),
-        })
-    return decks
+            "archidekt_updated": updated,
+        }
+        decks.append(deck)
+        if on_deck:
+            on_deck(deck)
+    return decks, unchanged
+
+
+def archidekt_versions() -> Dict[str, str]:
+    return {d["id"]: d.get("archidekt_updated", "") for d in load()["decks"] if d.get("archidekt_updated")}
 
 
 def upsert_decks(decks: List[dict], default_status: str = "built", keep_status: bool = True) -> dict:

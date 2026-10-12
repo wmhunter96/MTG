@@ -351,12 +351,16 @@ async def import_collection(req: CollectionImportRequest):
 
 @app.post("/api/collection/decks/import")
 async def import_user_decks(req: UserDecksRequest):
+    status = req.status if req.status in ("built", "brewing") else "built"
     try:
-        decks = await collection.fetch_archidekt_user_decks(req.username)
+        decks, unchanged = await collection.fetch_archidekt_user_decks(
+            req.username, collection.archidekt_versions(), lambda d: collection.upsert_decks([d], status))
+    except collection.RateLimited as exc:
+        raise HTTPException(429, str(exc))
     except collection.CollectionError as exc:
         raise HTTPException(400, str(exc))
-    result = collection.upsert_decks(decks, req.status if req.status in ("built", "brewing") else "built")
-    result["imported"] = len(decks)
+    result = collection.summary()
+    result["imported"], result["unchanged"] = len(decks), unchanged
     return result
 
 
