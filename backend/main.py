@@ -15,6 +15,13 @@ Endpoints:
   POST /api/recentpicks         → high-impact cards from the newest few sets (Built decks)
   POST /api/staples             → EDHREC staples (≥ N% of the commander's decks) the deck is missing
   POST /api/swaps               → cheaper same-role replacements for cards over the Brewing cap
+  GET  /api/collection          → collection summary, deck library, cards Built decks fight over
+  POST /api/collection/import   → replace the collection from an Archidekt link or a CSV / list
+  POST /api/collection/decks/import → add an Archidekt user's public decks to the library
+  POST /api/collection/decks    → save a deck (link or pasted list) to the library
+  POST /api/collection/decks/{id}   → change a saved deck's Built/Brewing status or name
+  DELETE /api/collection/decks/{id} → remove a saved deck
+  POST /api/collection/check    → which deck cards you own free, own but are in other Built decks, or lack
   POST /api/cache/clear         → drop cached Scryfall/EDHREC data and the CK price list
   GET  /api/status              → health check
 """
@@ -29,7 +36,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend import budget, cache, cardkingdom, edhrec, importer, scryfall, setpicks, swaps
+from backend import budget, cache, cardkingdom, collection, edhrec, importer, scryfall, setpicks, swaps
 from backend.config import load_settings, save_settings
 from backend.decklist import parse_decklist
 from backend.pricing import price_cards
@@ -77,6 +84,35 @@ class SetPicksRequest(BaseModel):
     decklist: str = ""
     commanders: List[str] = []
     status: str = ""    # "built" | "brewing"
+
+
+class CollectionImportRequest(BaseModel):
+    url: str = ""    # Archidekt collection link or id
+    text: str = ""   # CSV export or "1 Sol Ring" list
+
+
+class UserDecksRequest(BaseModel):
+    username: str
+    status: str = "built"
+
+
+class SaveDeckRequest(BaseModel):
+    url: str = ""         # fetched when there's no decklist; otherwise just remembered
+    decklist: str = ""
+    name: str = ""
+    commanders: List[str] = []
+    status: str = "built"
+
+
+class UpdateDeckRequest(BaseModel):
+    status: Optional[str] = None
+    name: Optional[str] = None
+
+
+class CheckRequest(BaseModel):
+    decklist: str = ""
+    commanders: List[str] = []
+    deck_id: str = ""
 
 
 def _budget_cap(status: str, settings: dict) -> Optional[float]:
@@ -286,6 +322,84 @@ async def recent_picks(req: SetPicksRequest):
     names = [c.name for c in deck.cards] + commanders
     settings = load_settings()
     return await setpicks.recent_picks(commanders, names, settings, _budget_cap(req.status, settings))
+
+
+# ---------------------------------------------------------------------------
+# Collection + deck library
+# ---------------------------------------------------------------------------
+
+@app.get("/api/collection")
+def get_collection():
+    return collection.summary()
+
+
+@app.post("/api/collection/import")
+async def import_collection(req: CollectionImportRequest):
+    try:
+        if req.text.strip():
+            cards = collection.parse_collection_text(req.text)
+            if not cards:
+                raise collection.CollectionError("No cards found in that export.")
+            return collection.import_collection(cards, "Pasted export")
+        if req.url.strip():
+            cards = await collection.fetch_archidekt_collection(req.url)
+            return collection.import_collection(cards, req.url.strip())
+    except collection.CollectionError as exc:
+        raise HTTPException(400, str(exc))
+    raise HTTPException(400, "Paste an Archidekt collection link or a CSV export")
+
+
+@app.post("/api/collection/decks/import")
+async def import_user_decks(req: UserDecksRequest):
+    try:
+        decks = await collection.fetch_archidekt_user_decks(req.username)
+    except collection.CollectionError as exc:
+        raise HTTPException(400, str(exc))
+    result = collection.upsert_decks(decks, req.status if req.status in ("built", "brewing") else "built")
+    result["imported"] = len(decks)
+    return result
+
+
+@app.post("/api/collection/decks")
+async def save_deck(req: SaveDeckRequest):
+    try:
+        decklist, name, commanders = req.decklist, req.name, req.commanders
+        if req.url.strip() and not decklist.strip():
+            try:
+                imp = await importer.import_deck(req.url)
+            except importer.ImportError_ as exc:
+                raise collection.CollectionError(str(exc))
+            decklist, name, commanders = imp["decklist"], name or imp["name"], imp["commanders"]
+        deck = collection.new_deck(name, decklist, commanders, req.status, req.url.strip())
+    except collection.CollectionError as exc:
+        raise HTTPException(400, str(exc))
+    if m := importer._ARCHIDEKT_RE.search(req.url):
+        deck["id"] = f"archidekt-{m.group(1)}"   # same id as a username import, so re-imports refresh it
+    result = collection.upsert_decks([deck], deck["status"], keep_status=False)
+    result["saved"] = deck["id"]
+    return result
+
+
+@app.post("/api/collection/decks/{deck_id}")
+def update_deck(deck_id: str, req: UpdateDeckRequest):
+    try:
+        return collection.update_deck(deck_id, req.status, req.name)
+    except collection.CollectionError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.delete("/api/collection/decks/{deck_id}")
+def delete_deck(deck_id: str):
+    return collection.delete_deck(deck_id)
+
+
+@app.post("/api/collection/check")
+def check_collection(req: CheckRequest):
+    deck = parse_decklist(req.decklist)
+    commanders = [c for c in req.commanders if c.strip()] or deck.commanders
+    if not deck.cards and not commanders:
+        raise HTTPException(400, "Paste or fetch a deck first")
+    return collection.check_deck(req.decklist, commanders, req.deck_id)
 
 
 # ---------------------------------------------------------------------------

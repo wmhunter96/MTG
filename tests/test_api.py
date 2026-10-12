@@ -70,6 +70,14 @@ ARCHIDEKT = {"name": "Imported", "categories": [], "cards": [
     {"quantity": 1, "categories": ["Commander"], "card": {"oracleCard": {"name": "Sol Ring Guy"}}},
     {"quantity": 1, "categories": ["Ramp"], "card": {"oracleCard": {"name": "Sol Ring"}}}]}
 
+ARCH_COLLECTION = {
+    1: {"count": 3, "next": "https://archidekt.com/api/collection/99/?page=2&pageSize=100", "results": [
+        {"quantity": 1, "card": {"oracleCard": {"name": "Sol Ring"}}},
+        {"quantity": 1, "card": {"oracleCard": {"name": "Mana Crypt"}}}]},
+    2: {"count": 3, "next": None, "results": [{"quantity": 2, "card": {"oracleCard": {"name": "Mind Stone"}}}]},
+}
+ARCH_USER = {"count": 1, "next": None, "results": [{"id": 42, "name": "Imported", "updatedAt": "2026-10-01T00:00:00Z"}]}
+
 calls = []
 
 
@@ -100,6 +108,14 @@ def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": SETS})
     if host == "archidekt.com" and path == "/api/decks/42/":
         return httpx.Response(200, json=ARCHIDEKT)
+    if host == "archidekt.com" and path == "/api/collection/99/":
+        return httpx.Response(200, json=ARCH_COLLECTION[int(req.url.params.get("page", 1))])
+    if host == "archidekt.com" and path == "/api/collection/13/":
+        return httpx.Response(403, json={})
+    if host == "archidekt.com" and path == "/api/decks/cards/":
+        if req.url.params.get("owner") == "wmhunter96":
+            return httpx.Response(200, json=ARCH_USER)
+        return httpx.Response(200, json={"count": 0, "next": None, "results": []})
     return httpx.Response(404)
 
 
@@ -209,3 +225,37 @@ def test_budget_swaps():
     assert crypt["saves"] == 149.5
     assert cards["Pricey Bolt"]["swaps"] == []   # nothing cheap on the page does removal
     assert body["potential_savings"] == 149.5 and body["over_cap_total"] == 190.0
+
+
+def test_collection_import_and_need_to_buy():
+    from backend import collection
+    collection._path().unlink(missing_ok=True)
+    r = client.post("/api/collection/import", json={"url": "https://archidekt.com/collection/v2/99"})
+    assert r.status_code == 200, r.text
+    assert r.json()["collection"] == {"source": "https://archidekt.com/collection/v2/99",
+                                      "imported_at": r.json()["collection"]["imported_at"], "unique": 3, "total": 4}
+    err = client.post("/api/collection/import", json={"url": "https://archidekt.com/collection/v2/13"})
+    assert err.status_code == 400 and "private" in err.json()["detail"]
+
+    # Username import pulls deck 42 (Sol Ring Guy + Sol Ring) in as Built.
+    lib = client.post("/api/collection/decks/import", json={"username": "https://archidekt.com/u/wmhunter96"}).json()
+    assert lib["imported"] == 1
+    assert [(d["id"], d["status"], d["commanders"]) for d in lib["decks"]] == [("archidekt-42", "built", ["Sol Ring Guy"])]
+    assert client.post("/api/collection/decks/import", json={"username": "nobody"}).status_code == 400
+
+    check = client.post("/api/collection/check", json={"decklist": "1 Swap Guy *CMDR*\n1 Sol Ring\n1 Mind Stone"}).json()
+    rows = {x["name"]: x for x in check["rows"]}
+    assert rows["Sol Ring"]["state"] == "in_use" and rows["Sol Ring"]["used_in"] == [{"deck": "Imported", "qty": 1}]
+    assert rows["Mind Stone"]["state"] == "have" and rows["Swap Guy"]["state"] == "missing"
+
+    # Flip the deck to Brewing and the Sol Ring is free again.
+    client.post("/api/collection/decks/archidekt-42", json={"status": "brewing"})
+    check = client.post("/api/collection/check", json={"decklist": "1 Swap Guy *CMDR*\n1 Sol Ring"}).json()
+    assert {x["name"]: x["state"] for x in check["rows"]}["Sol Ring"] == "have"
+
+    # Saving the pasted deck, then a CSV import replaces the collection.
+    saved = client.post("/api/collection/decks", json={"decklist": "1 Swap Guy *CMDR*\n1 Sol Ring", "status": "built"}).json()
+    assert any(d["name"] == "Swap Guy" and d["status"] == "built" for d in saved["decks"])
+    csv = client.post("/api/collection/import", json={"text": "Quantity,Name\n3,Sol Ring\n"}).json()
+    assert csv["collection"]["total"] == 3
+    assert client.delete(f"/api/collection/decks/{saved['saved']}").json()["decks"][0]["id"] == "archidekt-42"
