@@ -28,8 +28,10 @@ PAGE = {"path": "commanders/atraxa-praetors-voice", "data": {
 def test_suggestions_skip_owned_cards_and_low_inclusion():
     s = suggestions(PAGE, ["Sol Ring", "command tower"], min_inclusion_pct=1)
     assert s["url"] == "https://edhrec.com/commanders/atraxa-praetors-voice"
-    assert [l["header"] for l in s["lists"]] == ["High Synergy Cards"]
+    assert [l["header"] for l in s["lists"]] == ["High Synergy Cards", "Lands"]
+    assert [c["in_deck"] for c in s["lists"][0]["cards"]] == [False, True]
+    assert s["lists"][1]["cards"][0]["in_deck"] is True
     card = s["lists"][0]["cards"][0]
-    assert card == {"name": "Doubling Season", "synergy_pct": 41, "inclusion_pct": 20.0,
+    assert card == {"name": "Doubling Season", "in_deck": False, "synergy_pct": 41, "inclusion_pct": 20.0,
                     "num_decks": 9000, "url": "https://edhrec.com/cards/doubling-season"}
     assert s["missing_count"] == 1

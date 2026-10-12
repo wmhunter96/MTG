@@ -82,7 +82,7 @@ def suggestions(page: dict, deck_names: Iterable[str], min_inclusion_pct: float 
         cards = []
         for cv in cl.get("cardviews") or []:
             name = cv.get("name")
-            if not name or normalize_name(name) in have:
+            if not name:
                 continue
             inclusion = _pct(cv.get("num_decks", cv.get("inclusion")), cv.get("potential_decks"))
             if min_inclusion_pct and inclusion is not None and inclusion < min_inclusion_pct:
@@ -90,6 +90,7 @@ def suggestions(page: dict, deck_names: Iterable[str], min_inclusion_pct: float 
             synergy = cv.get("synergy")
             cards.append({
                 "name": name,
+                "in_deck": normalize_name(name) in have,
                 "synergy_pct": round(100.0 * synergy) if isinstance(synergy, (int, float)) else None,
                 "inclusion_pct": inclusion,
                 "num_decks": cv.get("num_decks", cv.get("inclusion")),
@@ -102,5 +103,22 @@ def suggestions(page: dict, deck_names: Iterable[str], min_inclusion_pct: float 
         "commander": header,
         "url": f"{SITE}/{page['path']}",
         "lists": lists,
-        "missing_count": len({normalize_name(c["name"]) for l in lists for c in l["cards"]}),
+        "missing_count": len({normalize_name(c["name"]) for l in lists for c in l["cards"] if not c["in_deck"]}),
     }
+
+
+async def set_page(code: str) -> Optional[dict]:
+    """EDHREC's page for a set: how many decks play each of its cards."""
+    path = f"sets/{code.lower()}"
+    data = cache.get(f"edhrec:{path}", CACHE_HOURS)
+    if data is None:
+        data = await _fetch(path)
+        if data is None:
+            return None
+        cache.put(f"edhrec:{path}", data)
+    return data
+
+
+def cardviews(data: dict) -> Iterable[dict]:
+    for cl in ((data.get("container") or {}).get("json_dict") or {}).get("cardlists") or []:
+        yield from cl.get("cardviews") or []

@@ -1,5 +1,5 @@
 """
-main.py — MTG Toolkit FastAPI server.
+main.py — MTG Brewmaster FastAPI server.
 
 Endpoints:
   GET  /                        → serve web UI
@@ -9,6 +9,9 @@ Endpoints:
   POST /api/prices/jobs         → start a best-price lookup for a decklist
   GET  /api/prices/jobs/{id}    → progress + results of a price lookup
   POST /api/edhrec              → EDHREC cards the deck is missing for its commander
+  POST /api/import              → fetch a decklist from a Moxfield / Archidekt link
+  GET  /api/sets                → recent paper sets for the New Sets picker
+  POST /api/setpicks            → high-impact cards from one set for this deck
   POST /api/cache/clear         → drop cached Scryfall/EDHREC data and the CK price list
   GET  /api/status              → health check
 """
@@ -23,12 +26,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend import cache, cardkingdom, edhrec
+from backend import cache, cardkingdom, edhrec, importer, scryfall, setpicks
 from backend.config import load_settings, save_settings
 from backend.decklist import parse_decklist
 from backend.pricing import price_cards
 
-app = FastAPI(title="MTG Toolkit")
+app = FastAPI(title="MTG Brewmaster")
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -46,6 +49,16 @@ class EdhrecRequest(BaseModel):
     decklist: str = ""
     commanders: List[str] = []
     variant: str = ""   # "", "budget", "expensive", or a theme slug
+
+
+class ImportRequest(BaseModel):
+    url: str
+
+
+class SetPicksRequest(BaseModel):
+    set: str
+    decklist: str = ""
+    commanders: List[str] = []
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -156,6 +169,34 @@ async def edhrec_suggestions(req: EdhrecRequest):
     names = [c.name for c in deck.cards] + commanders
     min_pct = float(load_settings()["edhrec"].get("min_inclusion_pct", 0))
     return edhrec.suggestions(page, names, min_pct)
+
+
+# ---------------------------------------------------------------------------
+# Deck links + new sets
+# ---------------------------------------------------------------------------
+
+@app.post("/api/import")
+async def import_deck(req: ImportRequest):
+    try:
+        return await importer.import_deck(req.url)
+    except importer.ImportError_ as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/sets")
+async def sets():
+    return await scryfall.list_sets()
+
+
+@app.post("/api/setpicks")
+async def set_picks(req: SetPicksRequest):
+    deck = parse_decklist(req.decklist)
+    commanders = [c for c in req.commanders if c.strip()] or deck.commanders
+    names = [c.name for c in deck.cards] + commanders
+    try:
+        return await setpicks.set_picks(req.set, commanders, names, load_settings())
+    except edhrec.EdhrecError as exc:
+        raise HTTPException(404, str(exc))
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ import time
 
 import httpx
 
-USER_AGENT = "mtg-toolkit/0.1 (+https://github.com/wmhunter96/MTG)"
+USER_AGENT = "mtg-brewmaster/0.2 (+https://github.com/wmhunter96/MTG)"
 
 _client: httpx.AsyncClient | None = None
 

@@ -6,6 +6,7 @@ Scryfall's `prices.usd` is TCGplayer's market price for the non-foil printing
 without scraping tcgplayer.com.
 """
 
+from datetime import date
 from typing import Dict, List, Optional
 
 from backend import cache
@@ -49,6 +50,7 @@ def _identity(card: dict) -> dict:
         "name": card["name"],
         "oracle_id": card.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
         "type_line": type_line,
+        "color_identity": card.get("color_identity") or [],
     }
 
 
@@ -65,7 +67,7 @@ async def resolve_names(names: List[str]) -> Dict[str, Optional[dict]]:
     out: Dict[str, Optional[dict]] = {}
     pending: List[str] = []
     for n in names:
-        hit = cache.get(f"name:{normalize_name(n)}", NAME_CACHE_HOURS)
+        hit = cache.get(f"name2:{normalize_name(n)}", NAME_CACHE_HOURS)
         if hit is not None:
             out[n] = hit
         else:
@@ -94,7 +96,7 @@ async def resolve_names(names: List[str]) -> Dict[str, Optional[dict]]:
 
     for n in pending:
         if out.get(n):
-            cache.put(f"name:{normalize_name(n)}", out[n])
+            cache.put(f"name2:{normalize_name(n)}", out[n])
     return out
 
 
@@ -139,3 +141,56 @@ async def printings(oracle_id: str, cache_hours: float) -> List[dict]:
 
     cache.put(key, prints)
     return prints
+
+
+# Set types worth browsing for new cards (skips tokens, promos, art series, ...).
+_SET_TYPES = {"expansion", "core", "commander", "draft_innovation", "masters", "funny"}
+
+
+async def list_sets() -> List[dict]:
+    """Paper sets newest first, for the New Sets picker."""
+    hit = cache.get("sets", 24)
+    if hit is not None:
+        return hit
+    data = await _get(f"{API}/sets") or {}
+    today = date.today().isoformat()
+    sets = [
+        {"code": s["code"], "name": s["name"], "released_at": s.get("released_at", ""),
+         "set_type": s.get("set_type", ""), "icon": s.get("icon_svg_uri")}
+        for s in data.get("data", [])
+        if s.get("set_type") in _SET_TYPES and not s.get("digital")
+        and s.get("card_count", 0) > 0 and s.get("released_at", "9999") <= today
+    ]
+    sets.sort(key=lambda s: s["released_at"], reverse=True)
+    cache.put("sets", sets)
+    return sets
+
+
+async def set_cards(code: str, cache_hours: float) -> List[dict]:
+    """Every distinct non-basic card in a set, with color identity and TCGplayer market price."""
+    key = f"setcards:{code.lower()}"
+    hit = cache.get(key, cache_hours)
+    if hit is not None:
+        return hit
+    cards: List[dict] = []
+    url = f"{API}/cards/search"
+    params: Optional[dict] = {"q": f"e:{code} game:paper -t:basic", "unique": "cards", "order": "set"}
+    while url:
+        page = await _get(url, params)
+        if page is None:
+            break
+        for c in page.get("data", []):
+            p = _printing(c)
+            cards.append({
+                "name": c["name"],
+                "color_identity": c.get("color_identity") or [],
+                "rarity": c.get("rarity", ""),
+                "type_line": c.get("type_line") or ((c.get("card_faces") or [{}])[0].get("type_line", "")),
+                "usd": p["usd"],
+                "image": p["image"],
+                "scryfall_url": p["scryfall_url"],
+            })
+        url = page.get("next_page") if page.get("has_more") else None
+        params = None
+    cache.put(key, cards)
+    return cards

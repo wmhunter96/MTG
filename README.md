@@ -1,12 +1,16 @@
-# MTG Toolkit
+# MTG Brewmaster
 
-A small self-hosted web app for Magic: The Gathering, built to run as a Docker container on Unraid (same setup as [DJDownload](https://github.com/wmhunter96/DJDownload)).
+A small, whimsical self-hosted web app for Magic: The Gathering Commander players, built to run as a Docker container on Unraid (same setup as [DJDownload](https://github.com/wmhunter96/DJDownload)).
 
 ---
 
 ## Features
 
-### Best price per card (Prices tab)
+### Bring your deck
+
+Paste a list, or drop in a **Moxfield** or **Archidekt** deck link and press **Fetch** (the deck must be public). The deck and commander are shared by every tab and remembered in your browser. If Moxfield refuses the request (it sometimes blocks servers), use Moxfield's *Export → Text* and paste it instead.
+
+### Best price per card (Bargains tab)
 
 Paste a decklist and get the cheapest copy of every card across **Card Kingdom** and **TCGplayer**:
 
@@ -21,16 +25,27 @@ Paste a decklist and get the cheapest copy of every card across **Card Kingdom**
 
 Accepts Moxfield, Archidekt and Arena exports or plain lists: `1 Sol Ring`, `1x Sol Ring (CMR) 472 *F*`, `Sol Ring`, section headers, `*CMDR*` markers, `[Category]` and `#tag` suffixes. Maybeboard sections are ignored.
 
-### Cards you might be missing (EDHREC tab)
+### Cards you might be missing (Brew Ideas tab)
 
 Enter your commander (or let the app pick it up from the list's Commander section / `*CMDR*` marker) and it pulls that commander's [EDHREC](https://edhrec.com) page and shows every recommended card **your deck doesn't already run**:
 
 - Grouped the way EDHREC groups them (High Synergy, Top Cards, Creatures, Ramp, Lands, ...)
 - Sort by **synergy** or by **% of decks** that run it
 - Switch to EDHREC's **Budget**, **Expensive**, or any **theme** page (`tokens`, `infect`, ...)
+- **Only cards I'm missing** toggle (on by default) hides what the deck already runs
 - Partner commanders: enter both separated by `+`
 - Tick suggestions and hit **Price selected** to send them straight to the price checker
 - Hover a card name to see its image
+
+### High-impact cards from a new set (New Sets tab)
+
+Pick a set (newest first) and get its best cards for your deck, as a grid of card images:
+
+- Only cards in your commander's **color identity**
+- Ranked first by how often **your commander's** EDHREC decks already run the card (inclusion % + synergy), then by how widely the card is played across **all** EDHREC decks that could run it (from EDHREC's set page)
+- **Only cards I'm missing** toggle hides cards already in the deck
+- Tick cards and hit **Price picked** to send them to Bargains
+- With no commander, it ranks the whole set by EDHREC popularity
 
 ---
 
@@ -45,19 +60,19 @@ Settings tab (saved to `/config/settings.yaml`):
 
 Cached data lives in `/config/cache` and survives container updates. **Clear cached prices** forces a fresh download.
 
-The app needs outbound internet access to `api.scryfall.com`, `api.cardkingdom.com` and `json.edhrec.com`.
+The app needs outbound internet access to `api.scryfall.com`, `api.cardkingdom.com`, `json.edhrec.com`, and (for deck links) `api2.moxfield.com` and `archidekt.com`.
 
 ---
 
 ## Deploying on Unraid
 
-Every push to `main` builds and publishes the image to `ghcr.io/wmhunter96/mtg:latest` via [GitHub Actions](.github/workflows/docker-publish.yml). An [Unraid template](unraid/mtg-toolkit.xml) is included so the container installs and updates through the normal Docker UI.
+Every push to `main` builds and publishes the image to `ghcr.io/wmhunter96/mtg:latest` via [GitHub Actions](.github/workflows/docker-publish.yml). An [Unraid template](unraid/mtg-brewmaster.xml) is included so the container installs and updates through the normal Docker UI.
 
 **One-time setup:**
 
 1. On GitHub, go to the repo's **Packages** tab → `mtg` package → **Package settings** → change visibility to **Public**. (GHCR packages default to private, and a private image needs a login on the Unraid side to pull.)
 2. On Unraid: **Docker** tab → **Template Repositories** → add `https://github.com/wmhunter96/MTG` → **Save**.
-3. Go to **Docker** → **Add Container** → template dropdown → **MTG-Toolkit**. The web UI defaults to host port **8010** so it doesn't clash with DJDownload on 8000. **Apply**.
+3. Go to **Docker** → **Add Container** → template dropdown → **MTG-Brewmaster**. The web UI defaults to host port **8010** so it doesn't clash with DJDownload on 8000. **Apply**.
 
 **After that:** any new push to `main` refreshes the `latest` tag, and Unraid's normal update check offers the update.
 
