@@ -179,6 +179,14 @@
   #card-preview { position: fixed; pointer-events: none; z-index: 10; display: none; width: 230px; border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.7); }
   .hover-card { cursor: default; border-bottom: 1px dotted var(--muted); }
 
+  /* ── Built / Brewing switch ── */
+  .status-switch { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg-deep); border: 1px solid var(--border); border-radius: 999px; padding: 4px; gap: 4px; }
+  .status-switch button { border: none; background: none; color: var(--muted); font-family: var(--script); font-size: 17px; padding: 7px 10px; border-radius: 999px; cursor: pointer; transition: all 0.2s; line-height: 1.1; }
+  .status-switch button small { display: block; font-family: var(--sans); font-size: 11px; opacity: 0.8; }
+  .status-switch button.on { background: linear-gradient(180deg, var(--gold-soft), var(--gold)); color: #2a1a10; box-shadow: 0 2px 8px rgba(227,185,85,0.3); }
+  .status-switch button:not(.on):hover { color: var(--text); }
+  .over-budget { color: var(--danger); }
+
   .tab { display: none; }
   .tab.active { display: contents; }
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface-2); border: 1px solid var(--gold); color: var(--text); padding: 10px 16px; border-radius: 999px; font-size: 14px; font-weight: 700; opacity: 0; transform: translateY(8px); transition: all 0.25s; pointer-events: none; }
@@ -223,6 +231,14 @@
       <label for="commander">Commander(s)</label>
       <input type="text" id="commander" placeholder="Atraxa, Praetors' Voice  (partners: separate with +)" />
     </div>
+    <div class="deck-part field">
+      <label>This deck is</label>
+      <div class="status-switch" role="radiogroup">
+        <button type="button" data-status="built" role="radio">🏰 Built<small>I own it</small></button>
+        <button type="button" data-status="brewing" role="radio">⚗ Brewing<small>still buying</small></button>
+      </div>
+      <div class="hint" id="status-hint"></div>
+    </div>
 
     <div class="tab active" data-pane="prices">
       <div class="section-label">Bargain Hunt</div>
@@ -232,7 +248,14 @@
 
     <div class="tab" data-pane="edhrec">
       <div class="section-label">Brew Ideas</div>
-      <div class="field">
+      <div class="field" id="built-view-field">
+        <label for="built-view">Show</label>
+        <select id="built-view">
+          <option value="new">Best new cards from recent sets</option>
+          <option value="all">All EDHREC suggestions</option>
+        </select>
+      </div>
+      <div class="field" id="variant-field">
         <label for="variant">EDHREC page</label>
         <select id="variant">
           <option value="">All decks</option>
@@ -293,6 +316,17 @@
         <select id="s-tie"><option value="cardkingdom">Card Kingdom wins</option><option value="tcgplayer">TCGplayer wins</option></select>
       </div>
       <label class="check"><input type="checkbox" id="s-basics" /> Skip basic lands</label>
+      <div class="section-label">Decks</div>
+      <div class="field" style="max-width:420px">
+        <label for="s-budget">Brewing decks: max price per card ($)</label>
+        <input type="number" id="s-budget" min="0" step="0.5" />
+        <div class="hint">Brew Ideas and New Sets only suggest cards at or under this price (cheapest of Card Kingdom in stock and TCGplayer market), and Bargains flags deck cards that cost more.</div>
+      </div>
+      <div class="field" style="max-width:420px">
+        <label for="s-recent">Built decks: look at the newest (sets)</label>
+        <input type="number" id="s-recent" min="1" max="10" step="1" />
+        <div class="hint">Brew Ideas for a built deck shows the best cards from this many of the newest sets.</div>
+      </div>
       <div class="section-label">EDHREC</div>
       <div class="field" style="max-width:420px">
         <label for="s-minpct">Hide suggestions in fewer than (% of decks)</label>
@@ -333,6 +367,36 @@ async function api(path, opts = {}) {
 
 function commanders() { return $('commander').value.split('+').map(s => s.trim()).filter(Boolean); }
 
+// ── App settings the UI needs (budget cap, how many recent sets) ──
+let appSettings = { brewing: { budget_max_usd: 5, recent_sets: 3 } };
+async function loadAppSettings() {
+  try { appSettings = await api('/api/settings'); } catch {}
+  renderStatus();
+}
+
+// ── Built / Brewing, remembered per commander ──
+const statusKey = () => 'status:' + (commanders().join('+').toLowerCase() || 'deck');
+function deckStatus() { return store.get(statusKey()) || 'brewing'; }
+function renderStatus() {
+  const st = deckStatus();
+  document.querySelectorAll('.status-switch button').forEach(b => {
+    b.classList.toggle('on', b.dataset.status === st);
+    b.setAttribute('aria-checked', b.dataset.status === st);
+  });
+  const b = appSettings.brewing;
+  $('status-hint').textContent = st === 'built'
+    ? `You own this deck, so Brew Ideas shows the best new cards from the last ${b.recent_sets} set${b.recent_sets === 1 ? '' : 's'}.`
+    : `Still buying, so suggestions are capped at ${money(b.budget_max_usd)} a card (change it in Settings), and Bargains flags cards over that.`;
+  $('built-view-field').style.display = st === 'built' ? '' : 'none';
+  $('variant-field').style.display = st === 'built' && $('built-view').value === 'new' ? 'none' : '';
+}
+document.querySelectorAll('.status-switch button').forEach(b => b.addEventListener('click', () => {
+  store.set(statusKey(), b.dataset.status);
+  renderStatus();
+  if (lastPrices) renderPrices();
+}));
+$('built-view').addEventListener('change', renderStatus);
+
 // ── Tabs ──
 function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -360,9 +424,10 @@ async function summarizeDeck() {
     const d = await api('/api/parse', { method: 'POST', body: JSON.stringify({ decklist: text }) });
     $('deck-summary').textContent = `${d.count} cards (${d.cards.length} unique)` + (d.commanders.length ? ` · Commander: ${d.commanders.join(' + ')}` : '');
     if (d.commanders.length && !$('commander').dataset.touched) $('commander').value = d.commanders.join(' + ');
+    renderStatus();
   } catch {}
 }
-$('commander').addEventListener('input', () => { $('commander').dataset.touched = $('commander').value ? '1' : ''; });
+$('commander').addEventListener('input', () => { $('commander').dataset.touched = $('commander').value ? '1' : ''; renderStatus(); });
 
 $('import-btn').addEventListener('click', async () => {
   const url = $('deck-url').value.trim();
@@ -526,9 +591,13 @@ function priceRow(r) {
     <td class="num">${r.qty}</td>
     <td>${cell(ck, 'cardkingdom')}</td>
     <td>${cell(tcg, 'tcgplayer')}</td>
-    <td>${badge} ${money(r.best_price)}</td>
+    <td>${badge} ${money(r.best_price)}${overBudget(r) ? '<div class="sub over-budget">over your ' + money(appSettings.brewing.budget_max_usd) + ' cap</div>' : ''}</td>
     <td class="num">${r.savings ? money(r.savings) : '—'}</td>
   </tr>`;
+}
+
+function overBudget(r) {
+  return deckStatus() === 'brewing' && !r.commander && r.best_price != null && r.best_price > appSettings.brewing.budget_max_usd + 1e-9;
 }
 
 function copyList(storeName) {
@@ -563,11 +632,18 @@ $('variant').addEventListener('change', () => { $('theme').style.display = $('va
 $('edhrec-btn').addEventListener('click', async () => {
   $('edhrec-error').textContent = '';
   const variant = $('variant').value === '__theme' ? $('theme').value.trim() : $('variant').value;
+  const status = deckStatus();
+  const builtNew = status === 'built' && $('built-view').value === 'new';
   $('edhrec-btn').disabled = true;
-  $('edhrec-results').innerHTML = '<div class="empty"><span class="big">🔮</span>Gazing into EDHREC…</div>';
+  $('edhrec-results').innerHTML = `<div class="empty"><span class="big">🔮</span>${builtNew ? 'Rummaging through the newest sets…' : 'Gazing into EDHREC…'}</div>`;
   try {
-    lastEdhrec = await api('/api/edhrec', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders: commanders(), variant }) });
-    renderEdhrec();
+    if (builtNew) {
+      lastRecent = await api('/api/recentpicks', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders: commanders(), status }) });
+      renderRecent();
+    } else {
+      lastEdhrec = await api('/api/edhrec', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders: commanders(), variant, status }) });
+      renderEdhrec();
+    }
   } catch (err) {
     $('edhrec-error').textContent = err.message;
     $('edhrec-results').innerHTML = '';
@@ -584,7 +660,7 @@ function renderEdhrec() {
   const lists = d.lists.map(l => ({ ...l, cards: l.cards.filter(c => !edhrecMissingOnly || !c.in_deck) })).filter(l => l.cards.length);
   $('edhrec-results').innerHTML = `
     <div class="row" style="justify-content:space-between">
-      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">${esc(d.commander)}</b> <span class="sub">· ${d.missing_count} cards your deck doesn't run · <a href="${esc(d.url)}" target="_blank" rel="noopener">open on EDHREC ↗</a></span></div>
+      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">${esc(d.commander)}</b> <span class="sub">· ${d.missing_count} card${d.missing_count === 1 ? '' : 's'} your deck doesn't run · <a href="${esc(d.url)}" target="_blank" rel="noopener">open on EDHREC ↗</a></span></div>
       <div class="row">
         <label class="check"><input type="checkbox" id="edhrec-missing" ${edhrecMissingOnly ? 'checked' : ''}> Only cards I'm missing</label>
         <select id="edhrec-sort" style="width:auto">
@@ -595,15 +671,17 @@ function renderEdhrec() {
       </div>
     </div>
     <div class="hint">Synergy = how much more often this commander's decks run the card than other decks of its colors. Tick cards to price them.</div>
+    ${d.budget_max_usd != null ? `<div class="hint">⚗ Brewing: only cards at or under <b>${money(d.budget_max_usd)}</b> are shown.</div>` : ''}
     ${lists.length ? lists.map((l, i) => `
       <details class="list-block" ${i < 3 ? 'open' : ''}>
         <summary>${esc(l.header)} <span class="sub">${l.cards.length}</span></summary>
-        <table><thead><tr><th style="width:28px"></th><th>Card</th><th>Synergy</th><th>In decks</th></tr></thead><tbody>
+        <table><thead><tr><th style="width:28px"></th><th>Card</th><th>Synergy</th><th>In decks</th>${d.budget_max_usd != null ? '<th>Price</th>' : ''}</tr></thead><tbody>
         ${[...l.cards].sort(sortFn).map(c => `<tr class="${c.in_deck ? 'owned' : ''}">
           <td>${c.in_deck ? '<span class="badge muted">in deck</span>' : `<input type="checkbox" data-pick="${esc(c.name)}" ${picked.has(c.name) ? 'checked' : ''}>`}</td>
           <td><a href="${esc(c.url)}" target="_blank" rel="noopener" data-card="${esc(c.name)}">${esc(c.name)}</a></td>
           <td>${c.synergy_pct == null ? '—' : (c.synergy_pct > 0 ? '+' : '') + c.synergy_pct + '%'}</td>
           <td style="white-space:nowrap">${c.inclusion_pct == null ? '—' : `<span class="bar"><div style="width:${Math.min(100, c.inclusion_pct)}%"></div></span>${c.inclusion_pct}%`}</td>
+          ${d.budget_max_usd != null ? `<td>${c.in_deck ? '' : money(c.budget_price)}</td>` : ''}
         </tr>`).join('')}
         </tbody></table>
       </details>`).join('') : '<div class="empty"><span class="big">🏆</span>Your deck already runs everything EDHREC lists for this commander.</div>'}`;
@@ -642,7 +720,7 @@ $('sets-btn').addEventListener('click', async () => {
   $('sets-btn').disabled = true;
   $('sets-results').innerHTML = '<div class="empty"><span class="big">✨</span>Cracking packs…</div>';
   try {
-    lastSets = await api('/api/setpicks', { method: 'POST', body: JSON.stringify({ set, decklist: $('decklist').value, commanders: commanders() }) });
+    lastSets = await api('/api/setpicks', { method: 'POST', body: JSON.stringify({ set, decklist: $('decklist').value, commanders: commanders(), status: deckStatus() }) });
     renderSets();
   } catch (err) {
     $('sets-error').textContent = err.message;
@@ -652,21 +730,36 @@ $('sets-btn').addEventListener('click', async () => {
   }
 });
 
+let lastRecent = null;
+
 function renderSets() {
-  const d = lastSets;
+  renderGrid('sets-results', lastSets, `Best of ${esc(lastSets.set)}`, renderSets);
+}
+
+function renderRecent() {
+  const d = lastRecent;
+  const names = d.sets.map(s => s.code).join(', ');
+  renderGrid('edhrec-results', d, `New for your deck`, renderRecent,
+    `🏰 Built deck: the best cards from the ${d.sets.length} newest set${d.sets.length === 1 ? '' : 's'} (${esc(names)}). Switch "Show" to see every EDHREC suggestion.`);
+}
+
+function renderGrid(rootId, d, title, rerender, note = '') {
+  const root = $(rootId);
   const shown = d.picks.filter(p => !setsMissingOnly || !p.in_deck);
   const owned = d.picks.filter(p => p.in_deck).length;
   const who = d.commander ? `for <b>${esc(d.commander.replace(/ \(Commander\)$/, ''))}</b> ${pips(d.colors)}` : (d.colors ? `in your colors ${pips(d.colors)}` : 'for any deck');
-  $('sets-results').innerHTML = `
+  root.innerHTML = `
     <div class="row" style="justify-content:space-between">
-      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">Best of ${esc(d.set)}</b> <span class="sub">${who} · ${d.picks.length} card${d.picks.length === 1 ? '' : 's'} worth a look${owned ? ` · ${owned} already in your deck` : ''}</span></div>
+      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">${title}</b> <span class="sub">${who} · ${d.picks.length} card${d.picks.length === 1 ? '' : 's'} worth a look${owned ? ` · ${owned} already in your deck` : ''}</span></div>
       <div class="row">
-        <label class="check"><input type="checkbox" id="sets-missing" ${setsMissingOnly ? 'checked' : ''}> Only cards I'm missing</label>
-        <button class="btn small price-picked" id="sets-price" disabled>🪙 Price picked</button>
+        <label class="check"><input type="checkbox" class="missing-toggle" ${setsMissingOnly ? 'checked' : ''}> Only cards I'm missing</label>
+        <button class="btn small price-picked" disabled>🪙 Price picked</button>
       </div>
     </div>
+    ${note ? `<div class="hint">${note}</div>` : ''}
+    ${d.budget_max_usd != null ? `<div class="hint">⚗ Brewing: only cards at or under <b>${money(d.budget_max_usd)}</b> are shown.</div>` : ''}
     ${!d.commander ? '<div class="hint">No commander set, so these are ranked by how widely each card is played across EDHREC. Add a commander for picks tailored to your deck.</div>' : ''}
-    ${!d.edhrec_set_found ? '<div class="hint">EDHREC doesn\'t have a page for this set yet, so only cards already showing up in your commander\'s decks are ranked.</div>' : ''}
+    ${d.edhrec_set_found === false ? '<div class="hint">EDHREC doesn\'t have a page for this set yet, so only cards already showing up in your commander\'s decks are ranked.</div>' : ''}
     ${shown.length ? `<div class="card-grid">${shown.slice(0, 60).map((p, i) => `
       <div class="mtg-card ${p.in_deck ? 'owned' : ''}">
         <span class="rank">#${i + 1}</span>
@@ -674,12 +767,12 @@ function renderSets() {
         <a href="${esc(p.scryfall_url || '#')}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(p.image || '')}" alt="${esc(p.name)}"></a>
         <div class="name">${esc(p.name)}</div>
         <div class="why">${p.source === 'commander' ? '🔮 ' : '📈 '}${esc(p.why)}</div>
-        <div class="foot"><span class="sub">${esc(p.rarity)}</span>${p.in_deck ? '<span class="badge muted">in deck</span>' : `<span class="badge gold">${money(p.usd)}</span>`}</div>
+        <div class="foot"><span class="sub">${p.set ? esc(p.set) + ' · ' : ''}${esc(p.rarity)}</span>${p.in_deck ? '<span class="badge muted">in deck</span>' : `<span class="badge gold">${money(p.budget_price ?? p.usd)}</span>`}</div>
       </div>`).join('')}</div>`
-      : '<div class="empty"><span class="big">🏆</span>Nothing new from this set to add. Your deck already has the good stuff.</div>'}`;
+      : '<div class="empty"><span class="big">🏆</span>Nothing new to add here. Your deck already has the good stuff.</div>'}`;
 
-  $('sets-missing').addEventListener('change', (e) => { setsMissingOnly = e.target.checked; store.set('sets-missing', setsMissingOnly ? '1' : '0'); renderSets(); });
-  bindPicks($('sets-results'), $('sets-price'));
+  root.querySelector('.missing-toggle').addEventListener('change', (e) => { setsMissingOnly = e.target.checked; store.set('sets-missing', setsMissingOnly ? '1' : '0'); rerender(); });
+  bindPicks(root, root.querySelector('.price-picked'));
 }
 
 // ── Settings ──
@@ -689,6 +782,8 @@ async function loadSettings() {
   $('s-tie').value = s.pricing.tie_goes_to;
   $('s-basics').checked = s.pricing.skip_basic_lands;
   $('s-minpct').value = s.edhrec.min_inclusion_pct;
+  $('s-budget').value = s.brewing.budget_max_usd;
+  $('s-recent').value = s.brewing.recent_sets;
   const st = await api('/api/status');
   $('cache-status').textContent = st.ck_pricelist_at
     ? `Card Kingdom price list downloaded ${new Date(st.ck_pricelist_at).toLocaleString()}.`
@@ -701,8 +796,11 @@ $('save-settings').addEventListener('click', async () => {
       tie_goes_to: $('s-tie').value,
       skip_basic_lands: $('s-basics').checked,
       min_inclusion_pct: Number($('s-minpct').value) || 0,
+      budget_max_usd: Number($('s-budget').value) || 0,
+      recent_sets: Number($('s-recent').value) || 3,
     }) });
     toast('Settings saved');
+    loadAppSettings();
   } catch (err) { toast(err.message); }
 });
 $('clear-cache').addEventListener('click', async () => {
@@ -713,6 +811,7 @@ $('clear-cache').addEventListener('click', async () => {
 
 showTab(store.get('tab') || 'prices');
 summarizeDeck();
+loadAppSettings();
 </script>
 </body>
 </html>

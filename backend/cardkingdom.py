@@ -85,6 +85,15 @@ class PriceList:
         return found
 
 
+    def cheapest_in_stock(self, name: str) -> Optional[float]:
+        """Lowest in-stock NM non-foil price across every printing of a card."""
+        prices = [
+            r["price"] for r in self.by_name.get(normalize_name(name), [])
+            if r["qty"] > 0 and not any(x in r["edition"].lower() for x in _EXCLUDED_EDITIONS)
+        ]
+        return min(prices) if prices else None
+
+
 _list: Optional[PriceList] = None
 _lock = asyncio.Lock()
 

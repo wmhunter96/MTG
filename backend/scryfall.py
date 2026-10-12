@@ -100,6 +100,35 @@ async def resolve_names(names: List[str]) -> Dict[str, Optional[dict]]:
     return out
 
 
+async def quick_prices(names: List[str], cache_hours: float) -> Dict[str, Optional[float]]:
+    """TCGplayer market price of each card's default printing, 75 cards per request.
+
+    Cheaper than walking every printing (see `printings`), so it's used to
+    budget-filter long suggestion lists; the Bargains tab does the full search.
+    """
+    out: Dict[str, Optional[float]] = {}
+    pending = []
+    for n in names:
+        hit = cache.get(f"qp:{normalize_name(n)}", cache_hours)
+        if hit is not None:
+            out[n] = hit.get("usd")
+        else:
+            pending.append(n)
+    for i in range(0, len(pending), 75):
+        batch = pending[i:i + 75]
+        data = await _post(f"{API}/cards/collection",
+                           {"identifiers": [{"name": n.split("//")[0].strip()} for n in batch]})
+        by_key = {}
+        for card in data.get("data", []):
+            usd = (card.get("prices") or {}).get("usd")
+            for k in _name_keys(card):
+                by_key[k] = float(usd) if usd else None
+        for n in batch:
+            out[n] = by_key.get(normalize_name(n))
+            cache.put(f"qp:{normalize_name(n)}", {"usd": out[n]})
+    return out
+
+
 def _printing(card: dict) -> dict:
     usd = (card.get("prices") or {}).get("usd")
     image = (card.get("image_uris") or {}).get("small")

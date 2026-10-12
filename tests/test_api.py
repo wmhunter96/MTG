@@ -11,6 +11,8 @@ from backend.main import app
 
 SCRY = {
     "sol ring": {"name": "Sol Ring", "oracle_id": "o-sol", "type_line": "Artifact"},
+    "mana crypt": {"name": "Mana Crypt", "oracle_id": "o-crypt", "type_line": "Artifact", "prices": {"usd": "150.00"}},
+    "cheap trick": {"name": "Cheap Trick", "oracle_id": "o-trick", "type_line": "Instant", "prices": {"usd": "0.25"}},
     "sol ring guy": {"name": "Sol Ring Guy", "oracle_id": "o-guy", "type_line": "Legendary Creature", "color_identity": ["G"]},
     "forest": {"name": "Forest", "oracle_id": "o-forest", "type_line": "Basic Land — Forest"},
     "delver of secrets": {"name": "Delver of Secrets // Insectile Aberration", "oracle_id": None,
@@ -35,7 +37,8 @@ CK = {"data": [
 EDH = {"header": "Sol Ring Guy", "container": {"json_dict": {"cardlists": [
     {"header": "Top Cards", "tag": "topcards", "cardviews": [
         {"name": "Sol Ring", "url": "/cards/sol-ring", "synergy": 0, "num_decks": 9, "potential_decks": 10},
-        {"name": "Mana Crypt", "url": "/cards/mana-crypt", "synergy": 0.1, "num_decks": 5, "potential_decks": 10}]}]}}}
+        {"name": "Mana Crypt", "url": "/cards/mana-crypt", "synergy": 0.1, "num_decks": 5, "potential_decks": 10},
+        {"name": "Cheap Trick", "url": "/cards/cheap-trick", "synergy": 0.05, "num_decks": 2, "potential_decks": 10}]}]}}}
 
 SETS = [
     {"code": "new", "name": "Newest Set", "released_at": "2026-09-01", "set_type": "expansion", "card_count": 3},
@@ -111,7 +114,7 @@ def test_edhrec_endpoint():
     r = client.post("/api/edhrec", json={"decklist": "1 Sol Ring Guy *CMDR*\n1 Sol Ring"})
     assert r.status_code == 200, r.text
     names = [c["name"] for l in r.json()["lists"] for c in l["cards"] if not c["in_deck"]]
-    assert names == ["Mana Crypt"]
+    assert names == ["Mana Crypt", "Cheap Trick"]
     assert client.post("/api/edhrec", json={"commanders": ["Nobody Here"]}).status_code == 404
 
 
@@ -138,3 +141,23 @@ def test_import_sets_and_setpicks():
     # Red Card is off-color; Mana Crypt is on Sol Ring Guy's EDHREC page.
     assert [p["name"] for p in body["picks"]] == ["Mana Crypt"]
     assert body["picks"][0]["source"] == "commander" and not body["picks"][0]["in_deck"]
+
+
+def test_brewing_budget_and_built_recent_picks():
+    deck = "1 Sol Ring Guy *CMDR*\n1 Sol Ring"
+    # Brewing: $5 cap (default) drops the $150 Mana Crypt but keeps the in-deck Sol Ring.
+    r = client.post("/api/edhrec", json={"decklist": deck, "status": "brewing"}).json()
+    cards = {c["name"]: c for l in r["lists"] for c in l["cards"]}
+    assert r["budget_max_usd"] == 5.0
+    assert "Mana Crypt" not in cards and cards["Cheap Trick"]["budget_price"] == 0.25
+    assert cards["Sol Ring"]["in_deck"]
+    assert r["missing_count"] == 1
+
+    # Built: picks pulled from the newest sets, no price cap.
+    built = client.post("/api/recentpicks", json={"decklist": deck, "status": "built"}).json()
+    assert [s["code"] for s in built["sets"]] == ["NEW"]
+    assert [p["name"] for p in built["picks"]] == ["Mana Crypt"] and built["picks"][0]["set"] == "NEW"
+
+    # Brewing on a single set applies the same cap.
+    brewing_set = client.post("/api/setpicks", json={"set": "new", "decklist": deck, "status": "brewing"}).json()
+    assert brewing_set["picks"] == []

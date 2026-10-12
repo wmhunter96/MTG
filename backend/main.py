@@ -12,6 +12,7 @@ Endpoints:
   POST /api/import              → fetch a decklist from a Moxfield / Archidekt link
   GET  /api/sets                → recent paper sets for the New Sets picker
   POST /api/setpicks            → high-impact cards from one set for this deck
+  POST /api/recentpicks         → high-impact cards from the newest few sets (Built decks)
   POST /api/cache/clear         → drop cached Scryfall/EDHREC data and the CK price list
   GET  /api/status              → health check
 """
@@ -20,7 +21,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -49,6 +50,7 @@ class EdhrecRequest(BaseModel):
     decklist: str = ""
     commanders: List[str] = []
     variant: str = ""   # "", "budget", "expensive", or a theme slug
+    status: str = ""    # "brewing" = only suggest cards under the budget cap
 
 
 class ImportRequest(BaseModel):
@@ -56,9 +58,15 @@ class ImportRequest(BaseModel):
 
 
 class SetPicksRequest(BaseModel):
-    set: str
+    set: str = ""
     decklist: str = ""
     commanders: List[str] = []
+    status: str = ""    # "built" | "brewing"
+
+
+def _budget_cap(status: str, settings: dict) -> Optional[float]:
+    """Brewing decks get the configured per-card price cap; built decks don't."""
+    return float(settings["brewing"]["budget_max_usd"]) if status == "brewing" else None
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -66,6 +74,8 @@ class UpdateSettingsRequest(BaseModel):
     skip_basic_lands: bool = True
     tie_goes_to: str = "cardkingdom"
     min_inclusion_pct: float = 0
+    budget_max_usd: float = 5.0
+    recent_sets: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +98,8 @@ def post_settings(req: UpdateSettingsRequest):
         tie_goes_to=req.tie_goes_to,
     )
     settings["edhrec"].update(min_inclusion_pct=max(0.0, req.min_inclusion_pct))
+    settings["brewing"].update(budget_max_usd=max(0.0, req.budget_max_usd),
+                               recent_sets=min(10, max(1, req.recent_sets)))
     save_settings(settings)
     return settings
 
@@ -167,8 +179,17 @@ async def edhrec_suggestions(req: EdhrecRequest):
     except edhrec.EdhrecError as exc:
         raise HTTPException(404, str(exc))
     names = [c.name for c in deck.cards] + commanders
-    min_pct = float(load_settings()["edhrec"].get("min_inclusion_pct", 0))
-    return edhrec.suggestions(page, names, min_pct)
+    settings = load_settings()
+    min_pct = float(settings["edhrec"].get("min_inclusion_pct", 0))
+    result = edhrec.suggestions(page, names, min_pct)
+    cap = _budget_cap(req.status, settings)
+    result["budget_max_usd"] = cap
+    if cap is not None:
+        for lst in result["lists"]:
+            lst["cards"] = await setpicks.apply_budget(lst["cards"], settings, cap)
+        result["lists"] = [l for l in result["lists"] if l["cards"]]
+        result["missing_count"] = len({c["name"] for l in result["lists"] for c in l["cards"] if not c["in_deck"]})
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -193,10 +214,22 @@ async def set_picks(req: SetPicksRequest):
     deck = parse_decklist(req.decklist)
     commanders = [c for c in req.commanders if c.strip()] or deck.commanders
     names = [c.name for c in deck.cards] + commanders
+    settings = load_settings()
     try:
-        return await setpicks.set_picks(req.set, commanders, names, load_settings())
+        return await setpicks.set_picks(req.set, commanders, names, settings, _budget_cap(req.status, settings))
     except edhrec.EdhrecError as exc:
         raise HTTPException(404, str(exc))
+
+
+@app.post("/api/recentpicks")
+async def recent_picks(req: SetPicksRequest):
+    deck = parse_decklist(req.decklist)
+    commanders = [c for c in req.commanders if c.strip()] or deck.commanders
+    if not commanders:
+        raise HTTPException(400, "Enter a commander, or mark one in the list (a Commander section or *CMDR*)")
+    names = [c.name for c in deck.cards] + commanders
+    settings = load_settings()
+    return await setpicks.recent_picks(commanders, names, settings, _budget_cap(req.status, settings))
 
 
 # ---------------------------------------------------------------------------
