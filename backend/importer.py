@@ -67,6 +67,8 @@ def parse_archidekt(data: dict) -> Tuple[str, List[Tuple[int, str]], List[Tuple[
     } | _SKIP_BOARDS
     commanders, cards = [], []
     for entry in data.get("cards") or []:
+        if entry.get("deletedAt"):   # removed from the deck but still in the payload
+            continue
         card = entry.get("card") or {}
         name = (card.get("oracleCard") or {}).get("name") or card.get("name")
         if not name:

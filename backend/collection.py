@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import uuid
+from urllib.parse import quote
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -224,6 +225,16 @@ def username(ref: str) -> str:
     return ref.strip("/@ ")
 
 
+async def _list_decks(url: str, user: str) -> List[dict]:
+    listed, pages = [], 0
+    while url and pages < 20:
+        body = await _get(url, "user")
+        listed += [d for d in body.get("results") or []
+                   if ((d.get("owner") or {}).get("username") or user).lower() == user.lower()]
+        url, pages = body.get("next"), pages + 1
+    return listed
+
+
 async def fetch_archidekt_user_decks(user: str, known: Optional[Dict[str, str]] = None,
                                      on_deck: Optional[Callable[[dict], None]] = None,
                                      progress: Progress = None) -> Tuple[List[dict], int]:
@@ -238,11 +249,20 @@ async def fetch_archidekt_user_decks(user: str, known: Optional[Dict[str, str]] 
     if not user or "/" in user:
         raise CollectionError("Enter an Archidekt username (or your profile link).")
     known = known or {}
-    listed, url, pages = [], f"https://archidekt.com/api/decks/cards/?owner={user}&ownerexact=true&pageSize=50", 0
-    while url and pages < 20:
-        body = await _get(url, "user")
-        listed += body.get("results") or []
-        url, pages = body.get("next"), pages + 1
+    if progress:
+        progress(0, 0, f"Looking up {user}'s decks…")
+    listed: List[dict] = []
+    # The site's own deck list (v3) first; the older search endpoint as a fallback.
+    for url in (f"https://archidekt.com/api/decks/v3/?ownerUsername={quote(user)}&pageSize=50",
+                f"https://archidekt.com/api/decks/cards/?owner={quote(user)}&ownerexact=true&pageSize=50"):
+        try:
+            listed = await _list_decks(url, user)
+        except RateLimited:
+            raise
+        except CollectionError:
+            listed = []
+        if listed:
+            break
     if not listed:
         raise CollectionError(f"Archidekt has no public decks for {user}.")
     decks, unchanged = [], 0

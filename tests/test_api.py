@@ -68,7 +68,8 @@ EDH_SET = {"container": {"json_dict": {"cardlists": [{"header": "Cards (NEW)", "
     {"name": "Red Card", "num_decks": 10, "potential_decks": 100}]}]}}}
 ARCHIDEKT = {"name": "Imported", "categories": [], "cards": [
     {"quantity": 1, "categories": ["Commander"], "card": {"oracleCard": {"name": "Sol Ring Guy"}}},
-    {"quantity": 1, "categories": ["Ramp"], "card": {"oracleCard": {"name": "Sol Ring"}}}]}
+    {"quantity": 1, "categories": ["Ramp"], "card": {"oracleCard": {"name": "Sol Ring"}}},
+    {"quantity": 1, "categories": ["Ramp"], "deletedAt": "2026-10-01T00:00:00Z", "card": {"oracleCard": {"name": "Mana Crypt"}}}]}
 
 ARCH_COLLECTION = {
     1: {"count": 3, "next": "https://archidekt.com/api/collection/99/?page=2&pageSize=100", "results": [
@@ -76,7 +77,8 @@ ARCH_COLLECTION = {
         {"quantity": 1, "card": {"oracleCard": {"name": "Mana Crypt"}}}]},
     2: {"count": 3, "next": None, "results": [{"quantity": 2, "card": {"oracleCard": {"name": "Mind Stone"}}}]},
 }
-ARCH_USER = {"count": 1, "next": None, "results": [{"id": 42, "name": "Imported", "updatedAt": "2026-10-01T00:00:00Z"}]}
+ARCH_USER = {"count": 1, "next": None, "results": [{"id": 42, "name": "Imported", "updatedAt": "2026-10-01T00:00:00Z",
+                                                     "owner": {"id": 1, "username": "wmhunter96"}}]}
 
 calls = []
 flaky = {"collection": 1, "deck": 0}   # 429s to hand out before answering
@@ -119,6 +121,13 @@ def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=ARCH_COLLECTION[int(req.url.params.get("page", 1))])
     if host == "archidekt.com" and path == "/api/collection/13/":
         return httpx.Response(403, json={})
+    if host == "archidekt.com" and path == "/api/decks/v3/":
+        if req.url.params.get("ownerUsername") == "wmhunter96":
+            return httpx.Response(200, json=ARCH_USER)
+        return httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    if host == "archidekt.com" and path == "/api/decks/cards/" and req.url.params.get("owner") == "oldapi":
+        return httpx.Response(200, json={"count": 1, "next": None, "results": [
+            {k: v for k, v in d.items() if k != "owner"} for d in ARCH_USER["results"]]})
     if host == "archidekt.com" and path == "/api/decks/cards/":
         if req.url.params.get("owner") == "wmhunter96":
             return httpx.Response(200, json=ARCH_USER)
@@ -273,6 +282,8 @@ def test_collection_import_and_need_to_buy():
     assert lib["imported"] == 1
     assert [(d["id"], d["status"], d["commanders"]) for d in lib["decks"]] == [("archidekt-42", "built", ["Sol Ring Guy"])]
     assert job("/api/collection/decks/import", {"username": "nobody"})["status"] == "error"
+    # The older search endpoint is still tried when v3 finds nothing.
+    assert job("/api/collection/decks/import", {"username": "oldapi"})["result"]["unchanged"] == 1
     # Unchanged on Archidekt, so a re-import doesn't fetch it again.
     again = job("/api/collection/decks/import", {"username": "wmhunter96"})["result"]
     assert again["imported"] == 0 and again["unchanged"] == 1
