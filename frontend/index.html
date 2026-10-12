@@ -248,12 +248,13 @@
 
     <div class="tab" data-pane="edhrec">
       <div class="section-label">Brew Ideas</div>
-      <div class="field" id="built-view-field">
-        <label for="built-view">Show</label>
-        <select id="built-view">
-          <option value="new">Best new cards from recent sets</option>
-          <option value="all">All EDHREC suggestions</option>
-        </select>
+      <div class="field">
+        <label for="brew-view">Show</label>
+        <select id="brew-view"></select>
+      </div>
+      <div class="field" id="staples-field">
+        <label for="staples-pct">Staples: run by at least (% of decks)</label>
+        <input type="number" id="staples-pct" min="0" max="100" step="5" />
       </div>
       <div class="field" id="variant-field">
         <label for="variant">EDHREC page</label>
@@ -266,6 +267,7 @@
         <input type="text" id="theme" placeholder="Theme as on EDHREC, e.g. tokens, infect, superfriends" style="display:none" />
       </div>
       <button class="btn" id="edhrec-btn">🔮 Find cards to add</button>
+      <div class="hint" id="brew-view-hint"></div>
     </div>
 
     <div class="tab" data-pane="sets">
@@ -332,6 +334,11 @@
         <label for="s-minpct">Hide suggestions in fewer than (% of decks)</label>
         <input type="number" id="s-minpct" min="0" max="100" step="1" />
       </div>
+      <div class="field" style="max-width:420px">
+        <label for="s-staples">Missing staples: run by at least (% of decks)</label>
+        <input type="number" id="s-staples" min="0" max="100" step="5" />
+        <div class="hint">Brew Ideas' "Missing staples" lists cards at least this share of your commander's decks run that yours doesn't.</div>
+      </div>
       <div class="row">
         <button class="btn" id="save-settings">Save</button>
         <button class="btn ghost" id="clear-cache">Clear cached prices</button>
@@ -368,9 +375,10 @@ async function api(path, opts = {}) {
 function commanders() { return $('commander').value.split('+').map(s => s.trim()).filter(Boolean); }
 
 // ── App settings the UI needs (budget cap, how many recent sets) ──
-let appSettings = { brewing: { budget_max_usd: 5, recent_sets: 3 } };
+let appSettings = { brewing: { budget_max_usd: 5, recent_sets: 3 }, edhrec: { staples_min_pct: 30 } };
 async function loadAppSettings() {
   try { appSettings = await api('/api/settings'); } catch {}
+  $('staples-pct').value = appSettings.edhrec.staples_min_pct;
   renderStatus();
 }
 
@@ -385,17 +393,40 @@ function renderStatus() {
   });
   const b = appSettings.brewing;
   $('status-hint').textContent = st === 'built'
-    ? `You own this deck, so Brew Ideas shows the best new cards from the last ${b.recent_sets} set${b.recent_sets === 1 ? '' : 's'}.`
-    : `Still buying, so suggestions are capped at ${money(b.budget_max_usd)} a card (change it in Settings), and Bargains flags cards over that.`;
-  $('built-view-field').style.display = st === 'built' ? '' : 'none';
-  $('variant-field').style.display = st === 'built' && $('built-view').value === 'new' ? 'none' : '';
+    ? `You own this deck, so Brew Ideas shows the best new cards from the last ${b.recent_sets} set${b.recent_sets === 1 ? '' : 's'} and staples you're missing.`
+    : `Still buying, so suggestions are capped at ${money(b.budget_max_usd)} a card (change it in Settings), Bargains flags cards over that, and Brew Ideas finds cheaper swaps for them.`;
+  renderBrewViews();
 }
+
+// ── Brew Ideas views: what each deck status can show, first one is the default ──
+const BREW_VIEWS = {
+  built: [['new', 'Best new cards from recent sets'], ['staples', 'Missing staples'], ['all', 'All EDHREC suggestions']],
+  brewing: [['swaps', 'Cheaper swaps for pricey cards'], ['staples', 'Missing staples'], ['all', 'All EDHREC suggestions']],
+};
+const VIEW_HINTS = {
+  new: 'The best cards from the newest sets for your commander.',
+  staples: "Cards that at least this share of your commander's EDHREC decks run and yours doesn't.",
+  swaps: "Each card in your deck over the price cap gets up to 3 cheaper cards from your commander's EDHREC page that do the same job (ramp, draw, removal…).",
+  all: "Everything on your commander's EDHREC page that your deck doesn't run.",
+};
+function brewView() { return $('brew-view').value || BREW_VIEWS[deckStatus()][0][0]; }
+function renderBrewViews() {
+  const st = deckStatus(), views = BREW_VIEWS[st];
+  const want = store.get('view:' + st);
+  $('brew-view').innerHTML = views.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+  $('brew-view').value = views.some(([v]) => v === want) ? want : views[0][0];
+  const view = brewView();
+  $('variant-field').style.display = view === 'all' || view === 'staples' ? '' : 'none';
+  $('staples-field').style.display = view === 'staples' ? '' : 'none';
+  $('brew-view-hint').textContent = VIEW_HINTS[view];
+  $('edhrec-btn').textContent = view === 'swaps' ? '⚗ Find cheaper swaps' : view === 'staples' ? '🔮 Find missing staples' : '🔮 Find cards to add';
+}
+$('brew-view').addEventListener('change', () => { store.set('view:' + deckStatus(), $('brew-view').value); renderBrewViews(); });
 document.querySelectorAll('.status-switch button').forEach(b => b.addEventListener('click', () => {
   store.set(statusKey(), b.dataset.status);
   renderStatus();
   if (lastPrices) renderPrices();
 }));
-$('built-view').addEventListener('change', renderStatus);
 
 // ── Tabs ──
 function showTab(name) {
@@ -486,8 +517,10 @@ function updatePickBtns() {
 let lastPrices = null;
 let priceSort = { key: 'savings', dir: -1 };
 let priceFilter = 'all';
+let pricedDeck = false;   // true when the last lookup was the deck itself (not picked cards)
 
 async function runPrices(listText) {
+  pricedDeck = listText === $('decklist').value;
   $('price-error').textContent = '';
   $('price-btn').disabled = true;
   $('price-status').style.display = '';
@@ -537,6 +570,7 @@ function renderPrices() {
     return (va > vb ? 1 : va < vb ? -1 : 0) * priceSort.dir;
   });
   const ckCount = t.by_store.cardkingdom.cards, tcgCount = t.by_store.tcgplayer.cards;
+  const overCap = pricedDeck ? priced.filter(overBudget).length : 0;
   const head = (key, label, cls = '') => `<th data-sort="${key}" class="${cls}">${label}${priceSort.key === key ? (priceSort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
 
   $('price-results').innerHTML = `
@@ -545,6 +579,8 @@ function renderPrices() {
       <div class="tile"><div class="k">All Card Kingdom</div><div class="v">${money(t.cardkingdom_only)}</div><div class="s">${t.cardkingdom_missing ? t.cardkingdom_missing + ' not in stock' : 'everything in stock'}</div></div>
       <div class="tile"><div class="k">All TCGplayer</div><div class="v">${money(t.tcgplayer_only)}</div><div class="s">${t.tcgplayer_missing ? t.tcgplayer_missing + ' without a price' : 'market prices'}</div></div>
     </div>
+    ${overCap ? `<div class="row"><span class="hint">⚗ ${overCap} card${overCap === 1 ? ' is' : 's are'} over your ${money(appSettings.brewing.budget_max_usd)} cap.</span>
+      <button class="btn ghost small" id="find-swaps">Find cheaper swaps</button></div>` : ''}
     <div class="row" style="justify-content:space-between">
       <select id="price-filter" style="width:auto">
         <option value="all">All cards (${priced.length})</option>
@@ -577,6 +613,11 @@ function renderPrices() {
   $('copy-ck').addEventListener('click', () => copyList('cardkingdom'));
   $('copy-tcg').addEventListener('click', () => copyList('tcgplayer'));
   $('export-csv').addEventListener('click', exportCsv);
+  if (overCap) $('find-swaps').addEventListener('click', () => {
+    store.set('view:brewing', 'swaps');
+    showTab('edhrec'); renderStatus();
+    $('edhrec-btn').click();
+  });
 }
 
 function priceRow(r) {
@@ -633,13 +674,23 @@ $('edhrec-btn').addEventListener('click', async () => {
   $('edhrec-error').textContent = '';
   const variant = $('variant').value === '__theme' ? $('theme').value.trim() : $('variant').value;
   const status = deckStatus();
-  const builtNew = status === 'built' && $('built-view').value === 'new';
+  const view = brewView();
+  const deck = { decklist: $('decklist').value, commanders: commanders() };
   $('edhrec-btn').disabled = true;
-  $('edhrec-results').innerHTML = `<div class="empty"><span class="big">🔮</span>${builtNew ? 'Rummaging through the newest sets…' : 'Gazing into EDHREC…'}</div>`;
+  $('edhrec-results').innerHTML = `<div class="empty"><span class="big">${view === 'swaps' ? '⚗' : '🔮'}</span>${
+    { new: 'Rummaging through the newest sets…', swaps: 'Hunting for cheaper stand-ins…' }[view] || 'Gazing into EDHREC…'}</div>`;
   try {
-    if (builtNew) {
-      lastRecent = await api('/api/recentpicks', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders: commanders(), status }) });
+    if (view === 'new') {
+      lastRecent = await api('/api/recentpicks', { method: 'POST', body: JSON.stringify({ ...deck, status }) });
       renderRecent();
+    } else if (view === 'swaps') {
+      if (!$('decklist').value.trim()) throw new Error('Paste or fetch a deck first, so there are cards to swap');
+      lastSwaps = await api('/api/swaps', { method: 'POST', body: JSON.stringify(deck) });
+      renderSwaps();
+    } else if (view === 'staples') {
+      const pct = $('staples-pct').value === '' ? null : Number($('staples-pct').value);
+      lastStaples = await api('/api/staples', { method: 'POST', body: JSON.stringify({ ...deck, variant, status, min_pct: pct }) });
+      renderStaples();
     } else {
       lastEdhrec = await api('/api/edhrec', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders: commanders(), variant, status }) });
       renderEdhrec();
@@ -692,6 +743,85 @@ function renderEdhrec() {
   bindPicks($('edhrec-results'), $('edhrec-price'));
 }
 
+// ── Missing staples ──
+let lastStaples = null;
+let staplesSort = 'synergy';
+
+function renderStaples() {
+  const d = lastStaples;
+  const cap = d.budget_max_usd;
+  const sorters = {
+    synergy: (a, b) => (b.synergy_pct ?? -999) - (a.synergy_pct ?? -999),
+    inclusion: (a, b) => (b.inclusion_pct ?? -1) - (a.inclusion_pct ?? -1),
+    price: (a, b) => (a.budget_price ?? Infinity) - (b.budget_price ?? Infinity),
+  };
+  const cards = [...d.cards].sort(sorters[staplesSort]);
+  const over = d.cards.filter(c => c.over_budget).length;
+  $('edhrec-results').innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">${esc(d.commander)}</b> <span class="sub">· ${cards.length} staple${cards.length === 1 ? '' : 's'} in ${d.min_inclusion_pct}%+ of decks that yours doesn't run · <a href="${esc(d.url)}" target="_blank" rel="noopener">open on EDHREC ↗</a></span></div>
+      <div class="row">
+        <select id="staples-sort" style="width:auto">
+          <option value="synergy">Sort by synergy</option>
+          <option value="inclusion">Sort by % of decks</option>
+          <option value="price">Sort by price</option>
+        </select>
+        <button class="btn small price-picked" disabled>🪙 Price picked</button>
+      </div>
+    </div>
+    ${cap != null && over ? `<div class="hint">⚗ Brewing: ${over} of these cost more than your <b>${money(cap)}</b> cap. They're shown anyway because they're staples; prices in red.</div>` : ''}
+    ${cards.length ? `<div class="list-block"><table>
+      <thead><tr><th style="width:28px"></th><th>Card</th><th>Synergy</th><th>In decks</th><th>Price</th></tr></thead><tbody>
+      ${cards.map(c => `<tr>
+        <td><input type="checkbox" data-pick="${esc(c.name)}" ${picked.has(c.name) ? 'checked' : ''}></td>
+        <td><a href="${esc(c.url)}" target="_blank" rel="noopener" data-card="${esc(c.name)}">${esc(c.name)}</a><div class="sub">${esc(c.list)}</div></td>
+        <td>${c.synergy_pct == null ? '—' : (c.synergy_pct > 0 ? '+' : '') + c.synergy_pct + '%'}</td>
+        <td style="white-space:nowrap"><span class="bar"><div style="width:${Math.min(100, c.inclusion_pct)}%"></div></span>${c.inclusion_pct}%</td>
+        <td class="${c.over_budget ? 'over-budget' : ''}">${money(c.budget_price)}</td>
+      </tr>`).join('')}
+      </tbody></table></div>`
+      : `<div class="empty"><span class="big">🏆</span>Your deck already runs every card in ${d.min_inclusion_pct}%+ of this commander's decks.</div>`}`;
+  $('staples-sort').value = staplesSort;
+  $('staples-sort').addEventListener('change', (e) => { staplesSort = e.target.value; renderStaples(); });
+  bindPicks($('edhrec-results'), $('edhrec-results').querySelector('.price-picked'));
+}
+
+// ── Budget swaps ──
+let lastSwaps = null;
+const ROLE_NAMES = { ramp: 'ramp', draw: 'draw', removal: 'removal', wipe: 'board wipe', counter: 'counter', tutor: 'tutor',
+                     recursion: 'recursion', protection: 'protection', tokens: 'tokens', land: 'land' };
+
+function renderSwaps() {
+  const d = lastSwaps;
+  const roleBadges = (roles) => roles.map(r => `<span class="badge muted">${esc(ROLE_NAMES[r] || r)}</span>`).join(' ');
+  $('edhrec-results').innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><b style="font-family:var(--script);font-size:20px;color:var(--gold-soft)">Cheaper swaps</b> <span class="sub">for ${esc(d.commander)} · cards over your ${money(d.budget_max_usd)} cap · <a href="${esc(d.url)}" target="_blank" rel="noopener">open on EDHREC ↗</a></span></div>
+      <button class="btn small price-picked" disabled>🪙 Price picked</button>
+    </div>
+    ${d.cards.length ? `
+    <div class="tiles">
+      <div class="tile"><div class="k">Cards over the cap</div><div class="v">${d.cards.length}</div><div class="s">${money(d.over_cap_total)} together</div></div>
+      <div class="tile best"><div class="k">Swap them all</div><div class="v">${money(d.potential_savings)}</div><div class="s">saved with the cheapest swap for each</div></div>
+    </div>
+    <div class="hint">Swaps come from your commander's EDHREC page and do the same job as the card they replace, judged from rules text. Tick the ones you like to price them.</div>
+    ${d.cards.map(c => `
+      <details class="list-block" open>
+        <summary><span><span data-card="${esc(c.name)}" class="hover-card">${esc(c.name)}</span> ${roleBadges(c.roles)}</span><span class="sub over-budget">${money(c.price)}</span></summary>
+        ${c.swaps.length ? `<table><thead><tr><th style="width:28px"></th><th>Swap in</th><th>Why</th><th>Price</th><th>Saves</th></tr></thead><tbody>
+        ${c.swaps.map(s => `<tr>
+          <td><input type="checkbox" data-pick="${esc(s.name)}" ${picked.has(s.name) ? 'checked' : ''}></td>
+          <td><a href="${esc(s.url)}" target="_blank" rel="noopener" data-card="${esc(s.name)}">${esc(s.name)}</a></td>
+          <td class="sub">${esc(s.why)}</td>
+          <td>${money(s.price)}</td>
+          <td class="num">${money(c.price - s.price)}</td>
+        </tr>`).join('')}
+        </tbody></table>` : `<div class="hint" style="padding:0 16px 12px">No cheaper card on this commander's EDHREC page does the same job. Try "All EDHREC suggestions" and pick one by hand.</div>`}
+      </details>`).join('')}`
+      : `<div class="empty"><span class="big">🏆</span>Every card in this deck is at or under your ${money(d.budget_max_usd)} cap. Nothing to swap.</div>`}`;
+  bindPicks($('edhrec-results'), $('edhrec-results').querySelector('.price-picked'));
+}
+
 // ── New Sets ──
 let setsLoaded = false;
 let lastSets = null;
@@ -740,7 +870,7 @@ function renderRecent() {
   const d = lastRecent;
   const names = d.sets.map(s => s.code).join(', ');
   renderGrid('edhrec-results', d, `New for your deck`, renderRecent,
-    `🏰 Built deck: the best cards from the ${d.sets.length} newest set${d.sets.length === 1 ? '' : 's'} (${esc(names)}). Switch "Show" to see every EDHREC suggestion.`);
+    `🏰 Built deck: the best cards from the ${d.sets.length} newest set${d.sets.length === 1 ? '' : 's'} (${esc(names)}). Switch "Show" for missing staples or every EDHREC suggestion.`);
 }
 
 function renderGrid(rootId, d, title, rerender, note = '') {
@@ -782,6 +912,7 @@ async function loadSettings() {
   $('s-tie').value = s.pricing.tie_goes_to;
   $('s-basics').checked = s.pricing.skip_basic_lands;
   $('s-minpct').value = s.edhrec.min_inclusion_pct;
+  $('s-staples').value = s.edhrec.staples_min_pct;
   $('s-budget').value = s.brewing.budget_max_usd;
   $('s-recent').value = s.brewing.recent_sets;
   const st = await api('/api/status');
@@ -796,6 +927,7 @@ $('save-settings').addEventListener('click', async () => {
       tie_goes_to: $('s-tie').value,
       skip_basic_lands: $('s-basics').checked,
       min_inclusion_pct: Number($('s-minpct').value) || 0,
+      staples_min_pct: $('s-staples').value === '' ? 30 : Number($('s-staples').value),
       budget_max_usd: Number($('s-budget').value) || 0,
       recent_sets: Number($('s-recent').value) || 3,
     }) });
