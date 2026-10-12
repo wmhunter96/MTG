@@ -243,24 +243,38 @@ def test_budget_swaps():
     assert body["potential_savings"] == 149.5 and body["over_cap_total"] == 190.0
 
 
+def job(path, body):
+    """Start a background job and wait for it, like the UI does."""
+    r = client.post(path, json=body)
+    assert r.status_code == 200, r.text
+    for _ in range(200):
+        j = client.get(f"/api/jobs/{r.json()['id']}").json()
+        if j["status"] != "running":
+            return j
+        time.sleep(0.02)
+    raise AssertionError("job never finished")
+
+
 def test_collection_import_and_need_to_buy():
     from backend import collection
     collection._path().unlink(missing_ok=True)
-    r = client.post("/api/collection/import", json={"url": "https://archidekt.com/collection/v2/99"})
-    assert r.status_code == 200, r.text
-    assert r.json()["collection"] == {"source": "https://archidekt.com/collection/v2/99",
-                                      "imported_at": r.json()["collection"]["imported_at"], "unique": 3, "total": 4}
+    j = job("/api/collection/import", {"url": "https://archidekt.com/collection/v2/99"})
+    assert j["status"] == "done", j
+    col = j["result"]["collection"]
+    assert (col["source"], col["unique"], col["total"]) == ("https://archidekt.com/collection/v2/99", 3, 4)
+    assert j["done"] == 3 and j["total"] == 3
     assert slept[-1] == 3.0   # first page got a 429; waited the Retry-After and carried on
-    err = client.post("/api/collection/import", json={"url": "https://archidekt.com/collection/v2/13"})
-    assert err.status_code == 400 and "private" in err.json()["detail"]
+    err = job("/api/collection/import", {"url": "https://archidekt.com/collection/v2/13"})
+    assert err["status"] == "error" and "private" in err["error"]
+    assert client.post("/api/collection/import", json={"url": "https://example.com/x"}).status_code == 400
 
     # Username import pulls deck 42 (Sol Ring Guy + Sol Ring) in as Built.
-    lib = client.post("/api/collection/decks/import", json={"username": "https://archidekt.com/u/wmhunter96"}).json()
+    lib = job("/api/collection/decks/import", {"username": "https://archidekt.com/u/wmhunter96"})["result"]
     assert lib["imported"] == 1
     assert [(d["id"], d["status"], d["commanders"]) for d in lib["decks"]] == [("archidekt-42", "built", ["Sol Ring Guy"])]
-    assert client.post("/api/collection/decks/import", json={"username": "nobody"}).status_code == 400
+    assert job("/api/collection/decks/import", {"username": "nobody"})["status"] == "error"
     # Unchanged on Archidekt, so a re-import doesn't fetch it again.
-    again = client.post("/api/collection/decks/import", json={"username": "wmhunter96"}).json()
+    again = job("/api/collection/decks/import", {"username": "wmhunter96"})["result"]
     assert again["imported"] == 0 and again["unchanged"] == 1
 
     check = client.post("/api/collection/check", json={"decklist": "1 Swap Guy *CMDR*\n1 Sol Ring\n1 Mind Stone"}).json()
@@ -286,11 +300,11 @@ def test_archidekt_rate_limit_gives_up_politely():
     collection._path().unlink(missing_ok=True)
     flaky["deck"] = 99   # every deck fetch is refused
     try:
-        r = client.post("/api/collection/decks/import", json={"username": "wmhunter96"})
-        assert r.status_code == 429 and "press Import decks again" in r.json()["detail"]
+        j = job("/api/collection/decks/import", {"username": "wmhunter96"})
+        assert j["status"] == "error" and "press Import decks again" in j["error"]
         r = client.post("/api/import", json={"url": "https://archidekt.com/decks/42/x"})
         assert r.status_code == 400 and "slow down" in r.json()["detail"]
         assert slept[-4:] == [2.0, 4.0, 8.0, 16.0]   # backed off before giving up
     finally:
         flaky["deck"] = 0
-    assert client.post("/api/collection/decks/import", json={"username": "wmhunter96"}).json()["imported"] == 1
+    assert job("/api/collection/decks/import", {"username": "wmhunter96"})["result"]["imported"] == 1

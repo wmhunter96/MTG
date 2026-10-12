@@ -174,7 +174,10 @@ async def _get(url: str, what: str):
         raise CollectionError("Archidekt didn't send data back. Export it as CSV and paste it instead.")
 
 
-async def fetch_archidekt_collection(ref: str) -> Dict[str, dict]:
+Progress = Optional[Callable[[int, int, str], None]]   # (done, total, what's happening)
+
+
+async def fetch_archidekt_collection(ref: str, progress: Progress = None) -> Dict[str, dict]:
     cid = collection_id(ref)
     if not cid:
         raise CollectionError("That doesn't look like an Archidekt collection link (archidekt.com/collection/v2/12345).")
@@ -186,6 +189,8 @@ async def fetch_archidekt_collection(ref: str) -> Dict[str, dict]:
         for qty, name in rows:
             _add(cards, name, qty)
         seen += len(rows)
+        if progress:
+            progress(seen, count or seen, f"{seen} cards so far")
         if not rows or (count is not None and seen >= count):
             break
         page += 1
@@ -220,7 +225,8 @@ def username(ref: str) -> str:
 
 
 async def fetch_archidekt_user_decks(user: str, known: Optional[Dict[str, str]] = None,
-                                     on_deck: Optional[Callable[[dict], None]] = None) -> Tuple[List[dict], int]:
+                                     on_deck: Optional[Callable[[dict], None]] = None,
+                                     progress: Progress = None) -> Tuple[List[dict], int]:
     """Every public deck an Archidekt user owns, as library entries.
 
     `known` maps library ids to the Archidekt updatedAt they were fetched at;
@@ -241,8 +247,10 @@ async def fetch_archidekt_user_decks(user: str, known: Optional[Dict[str, str]] 
         raise CollectionError(f"Archidekt has no public decks for {user}.")
     decks, unchanged = [], 0
     todo = [d for d in listed if d.get("id") is not None]
-    for d in todo:
+    for i, d in enumerate(todo):
         deck_id, updated = d["id"], d.get("updatedAt") or ""
+        if progress:
+            progress(i, len(todo), d.get("name") or f"Deck {deck_id}")
         if updated and known.get(f"archidekt-{deck_id}") == updated:
             unchanged += 1
             continue

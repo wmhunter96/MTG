@@ -307,6 +307,7 @@
           </div>
         </details>
         <div class="hint" id="col-summary">Count every copy you own, including ones sleeved in decks. Importing replaces the last import.</div>
+        <div class="hint" id="col-progress"></div>
         <div id="col-error" class="error"></div>
       </div>
       <div class="section-label">Your Decks</div>
@@ -415,7 +416,12 @@ function toast(msg) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  let res;
+  try {
+    res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  } catch {
+    throw new Error("Lost the connection to the Brewmaster server. Check it's running and try again.");
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
   return body;
@@ -1049,14 +1055,31 @@ async function busy(btn, label, fn) {
   try { await fn(); } finally { btn.disabled = false; btn.textContent = old; }
 }
 
+// Long Archidekt imports run as server jobs; poll them so no request has to stay open.
+async function runJob(start, onProgress) {
+  if (!start.id) return start;   // finished right away (pasted export)
+  let misses = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 1000));
+    let job;
+    try { job = await api(`/api/jobs/${start.id}`); misses = 0; }
+    catch (err) { if (++misses >= 5) throw err; continue; }
+    if (job.status === 'done') return job.result;
+    if (job.status === 'error') throw new Error(job.error);
+    onProgress(job);
+  }
+}
+const showJob = (job) => { $('col-progress').textContent = job.current + (job.total ? ` (${job.done}/${job.total})` : ''); };
+
 async function importCollection(body) {
   $('col-error').textContent = '';
   try {
-    library = await api('/api/collection/import', { method: 'POST', body: JSON.stringify(body) });
+    library = await runJob(await api('/api/collection/import', { method: 'POST', body: JSON.stringify(body) }), showJob);
     renderLibrary();
     toast(`Imported ${library.collection.total} cards`);
     if (lastCheck) runCheck();
   } catch (err) { $('col-error').textContent = err.message; }
+  finally { $('col-progress').textContent = ''; }
 }
 $('col-url').value = store.get('col-url') || '';
 $('col-user').value = store.get('col-user') || '';
@@ -1081,10 +1104,11 @@ $('col-decks').addEventListener('click', () => {
   $('col-error').textContent = '';
   busy($('col-decks'), 'Importing…', async () => {
     try {
-      library = await api('/api/collection/decks/import', { method: 'POST', body: JSON.stringify({ username }) });
+      library = await runJob(await api('/api/collection/decks/import', { method: 'POST', body: JSON.stringify({ username }) }), showJob);
       renderLibrary();
       toast(`Imported ${library.imported} new or changed deck${library.imported === 1 ? '' : 's'}` + (library.unchanged ? `, ${library.unchanged} unchanged` : ''));
     } catch (err) { $('col-error').textContent = err.message; loadLibrary(); }
+    finally { $('col-progress').textContent = ''; }
   });
 });
 $('col-save').addEventListener('click', () => {

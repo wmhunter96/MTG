@@ -16,8 +16,9 @@ Endpoints:
   POST /api/staples             → EDHREC staples (≥ N% of the commander's decks) the deck is missing
   POST /api/swaps               → cheaper same-role replacements for cards over the Brewing cap
   GET  /api/collection          → collection summary, deck library, cards Built decks fight over
-  POST /api/collection/import   → replace the collection from an Archidekt link or a CSV / list
-  POST /api/collection/decks/import → add an Archidekt user's public decks to the library
+  POST /api/collection/import   → replace the collection from a CSV / list, or start a job for an Archidekt link
+  POST /api/collection/decks/import → start a job adding an Archidekt user's public decks to the library
+  GET  /api/jobs/{id}           → progress + result of any background job (prices, Archidekt imports)
   POST /api/collection/decks    → save a deck (link or pasted list) to the library
   POST /api/collection/decks/{id}   → change a saved deck's Built/Brewing status or name
   DELETE /api/collection/decks/{id} → remove a saved deck
@@ -177,13 +178,19 @@ async def start_price_job(req: DecklistRequest):
     if not deck.cards:
         raise HTTPException(400, "No cards found in that list")
 
+    return _start_job(lambda progress: price_cards(deck.cards, load_settings(), progress),
+                      "Loading Card Kingdom price list…", total=len(deck.cards))
+
+
+def _start_job(work, current: str = "", total: int = 0) -> dict:
+    """Run `work(progress)` in the background; poll GET /api/jobs/{id} for it."""
     job_id = uuid.uuid4().hex[:12]
     job = {
         "id": job_id,
         "status": "running",
         "done": 0,
-        "total": len(deck.cards),
-        "current": "Loading Card Kingdom price list…",
+        "total": total,
+        "current": current,
         "result": None,
         "error": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -197,7 +204,7 @@ async def start_price_job(req: DecklistRequest):
 
     async def run():
         try:
-            job["result"] = await price_cards(deck.cards, load_settings(), progress)
+            job["result"] = await work(progress)
             job["status"] = "done"
         except Exception as exc:
             job["status"] = "error"
@@ -210,6 +217,7 @@ async def start_price_job(req: DecklistRequest):
 
 
 @app.get("/api/prices/jobs/{job_id}")
+@app.get("/api/jobs/{job_id}")
 def get_price_job(job_id: str):
     job = jobs.get(job_id)
     if not job:
@@ -335,33 +343,38 @@ def get_collection():
 
 @app.post("/api/collection/import")
 async def import_collection(req: CollectionImportRequest):
-    try:
-        if req.text.strip():
-            cards = collection.parse_collection_text(req.text)
-            if not cards:
-                raise collection.CollectionError("No cards found in that export.")
-            return collection.import_collection(cards, "Pasted export")
-        if req.url.strip():
-            cards = await collection.fetch_archidekt_collection(req.url)
-            return collection.import_collection(cards, req.url.strip())
-    except collection.CollectionError as exc:
-        raise HTTPException(400, str(exc))
-    raise HTTPException(400, "Paste an Archidekt collection link or a CSV export")
+    """A pasted export imports right away; an Archidekt link becomes a job, since
+    Archidekt makes us go slowly and a long request gets cut off by proxies."""
+    if req.text.strip():
+        cards = collection.parse_collection_text(req.text)
+        if not cards:
+            raise HTTPException(400, "No cards found in that export.")
+        return collection.import_collection(cards, "Pasted export")
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "Paste an Archidekt collection link or a CSV export")
+    if not collection.collection_id(url):
+        raise HTTPException(400, "That doesn't look like an Archidekt collection link (archidekt.com/collection/v2/12345).")
+
+    async def work(progress):
+        cards = await collection.fetch_archidekt_collection(url, progress)
+        return collection.import_collection(cards, url)
+    return _start_job(work, "Asking Archidekt for your collection…")
 
 
 @app.post("/api/collection/decks/import")
 async def import_user_decks(req: UserDecksRequest):
     status = req.status if req.status in ("built", "brewing") else "built"
-    try:
+    if not collection.username(req.username) or "/" in collection.username(req.username):
+        raise HTTPException(400, "Enter an Archidekt username (or your profile link).")
+
+    async def work(progress):
         decks, unchanged = await collection.fetch_archidekt_user_decks(
-            req.username, collection.archidekt_versions(), lambda d: collection.upsert_decks([d], status))
-    except collection.RateLimited as exc:
-        raise HTTPException(429, str(exc))
-    except collection.CollectionError as exc:
-        raise HTTPException(400, str(exc))
-    result = collection.summary()
-    result["imported"], result["unchanged"] = len(decks), unchanged
-    return result
+            req.username, collection.archidekt_versions(), lambda d: collection.upsert_decks([d], status), progress)
+        result = collection.summary()
+        result["imported"], result["unchanged"] = len(decks), unchanged
+        return result
+    return _start_job(work, "Asking Archidekt for your decks…")
 
 
 @app.post("/api/collection/decks")
