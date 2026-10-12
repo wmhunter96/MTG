@@ -11,6 +11,7 @@ from backend.main import app
 
 SCRY = {
     "sol ring": {"name": "Sol Ring", "oracle_id": "o-sol", "type_line": "Artifact"},
+    "sol ring guy": {"name": "Sol Ring Guy", "oracle_id": "o-guy", "type_line": "Legendary Creature", "color_identity": ["G"]},
     "forest": {"name": "Forest", "oracle_id": "o-forest", "type_line": "Basic Land — Forest"},
     "delver of secrets": {"name": "Delver of Secrets // Insectile Aberration", "oracle_id": None,
                           "type_line": "", "card_faces": [
@@ -36,6 +37,23 @@ EDH = {"header": "Sol Ring Guy", "container": {"json_dict": {"cardlists": [
         {"name": "Sol Ring", "url": "/cards/sol-ring", "synergy": 0, "num_decks": 9, "potential_decks": 10},
         {"name": "Mana Crypt", "url": "/cards/mana-crypt", "synergy": 0.1, "num_decks": 5, "potential_decks": 10}]}]}}}
 
+SETS = [
+    {"code": "new", "name": "Newest Set", "released_at": "2026-09-01", "set_type": "expansion", "card_count": 3},
+    {"code": "fut", "name": "Future Set", "released_at": "2099-01-01", "set_type": "expansion", "card_count": 3},
+    {"code": "tok", "name": "Tokens", "released_at": "2026-09-01", "set_type": "token", "card_count": 3},
+]
+NEW_SET = [
+    {"id": "n1", "name": "Mana Crypt", "color_identity": [], "rarity": "mythic", "type_line": "Artifact",
+     "prices": {"usd": "150.00"}, "image_uris": {"small": "img"}},
+    {"id": "n2", "name": "Red Card", "color_identity": ["R"], "rarity": "rare", "type_line": "Instant",
+     "prices": {"usd": "1.00"}, "image_uris": {"small": "img"}},
+]
+EDH_SET = {"container": {"json_dict": {"cardlists": [{"header": "Cards (NEW)", "cardviews": [
+    {"name": "Red Card", "num_decks": 10, "potential_decks": 100}]}]}}}
+ARCHIDEKT = {"name": "Imported", "categories": [], "cards": [
+    {"quantity": 1, "categories": ["Commander"], "card": {"oracleCard": {"name": "Sol Ring Guy"}}},
+    {"quantity": 1, "categories": ["Ramp"], "card": {"oracleCard": {"name": "Sol Ring"}}}]}
+
 calls = []
 
 
@@ -49,12 +67,21 @@ def handler(req: httpx.Request) -> httpx.Response:
     if host == "api.scryfall.com" and path == "/cards/named":
         return httpx.Response(404, json={})
     if host == "api.scryfall.com" and path == "/cards/search":
-        oid = req.url.params["q"].split()[0].split(":")[1]
+        q = req.url.params["q"]
+        if q.startswith("e:new"):
+            return httpx.Response(200, json={"data": NEW_SET, "has_more": False})
+        oid = q.split()[0].split(":")[1]
         return httpx.Response(200, json={"data": PRINTS.get(oid, []), "has_more": False})
     if host == "api.cardkingdom.com":
         return httpx.Response(200, json=CK)
     if host == "json.edhrec.com" and path == "/pages/commanders/sol-ring-guy.json":
         return httpx.Response(200, json=EDH)
+    if host == "json.edhrec.com" and path == "/pages/sets/new.json":
+        return httpx.Response(200, json=EDH_SET)
+    if host == "api.scryfall.com" and path == "/sets":
+        return httpx.Response(200, json={"data": SETS})
+    if host == "archidekt.com" and path == "/api/decks/42/":
+        return httpx.Response(200, json=ARCHIDEKT)
     return httpx.Response(404)
 
 
@@ -83,7 +110,7 @@ def test_price_job_end_to_end():
 def test_edhrec_endpoint():
     r = client.post("/api/edhrec", json={"decklist": "1 Sol Ring Guy *CMDR*\n1 Sol Ring"})
     assert r.status_code == 200, r.text
-    names = [c["name"] for l in r.json()["lists"] for c in l["cards"]]
+    names = [c["name"] for l in r.json()["lists"] for c in l["cards"] if not c["in_deck"]]
     assert names == ["Mana Crypt"]
     assert client.post("/api/edhrec", json={"commanders": ["Nobody Here"]}).status_code == 404
 
@@ -93,4 +120,21 @@ def test_settings_roundtrip_and_index():
                                            "tie_goes_to": "tcgplayer", "min_inclusion_pct": 5}).json()
     assert s["pricing"]["cache_hours"] == 6 and s["edhrec"]["min_inclusion_pct"] == 5
     assert client.get("/api/settings").json()["pricing"]["tie_goes_to"] == "tcgplayer"
-    assert "MTG Toolkit" in client.get("/").text
+    assert "MTG Brewmaster" in client.get("/").text
+
+
+def test_import_sets_and_setpicks():
+    imp = client.post("/api/import", json={"url": "https://archidekt.com/decks/42/imported"}).json()
+    assert imp["commanders"] == ["Sol Ring Guy"]
+    assert client.post("/api/import", json={"url": "https://example.com/deck"}).status_code == 400
+
+    sets = client.get("/api/sets").json()
+    assert [s["code"] for s in sets] == ["new"]   # future + token sets filtered out
+
+    r = client.post("/api/setpicks", json={"set": "new", "decklist": imp["decklist"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["colors"] == ["G"]
+    # Red Card is off-color; Mana Crypt is on Sol Ring Guy's EDHREC page.
+    assert [p["name"] for p in body["picks"]] == ["Mana Crypt"]
+    assert body["picks"][0]["source"] == "commander" and not body["picks"][0]["in_deck"]

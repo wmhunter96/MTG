@@ -1,7 +1,7 @@
 services:
-  mtg-toolkit:
+  mtg-brewmaster:
     build: .
-    container_name: mtg-toolkit
+    container_name: mtg-brewmaster
     restart: unless-stopped
     ports:
       # 8010 on the host so it doesn't collide with DJDownload on 8000
