@@ -20,7 +20,7 @@ Endpoints:
   POST /api/collection/decks/import → start a job adding an Archidekt user's public decks to the library
   GET  /api/jobs/{id}           → progress + result of any background job (prices, Archidekt imports)
   POST /api/collection/decks    → save a deck (link or pasted list) to the library
-  POST /api/collection/decks/{id}   → change a saved deck's Built/Brewing status or name
+  POST /api/collection/decks/{id}   → change a saved deck's Built/Brewing status, name or base deck
   DELETE /api/collection/decks/{id} → remove a saved deck
   POST /api/collection/check    → which deck cards you own free, own but are in other Built decks, or lack
   POST /api/cache/clear         → drop cached Scryfall/EDHREC data and the CK price list
@@ -108,12 +108,14 @@ class SaveDeckRequest(BaseModel):
 class UpdateDeckRequest(BaseModel):
     status: Optional[str] = None
     name: Optional[str] = None
+    base_id: Optional[str] = None   # deck this one is a testing copy of; "" clears
 
 
 class CheckRequest(BaseModel):
     decklist: str = ""
     commanders: List[str] = []
     deck_id: str = ""
+    base_id: Optional[str] = None   # deck to ignore; None = the saved base deck, "" = none
 
 
 def _budget_cap(status: str, settings: dict) -> Optional[float]:
@@ -400,9 +402,9 @@ async def save_deck(req: SaveDeckRequest):
 @app.post("/api/collection/decks/{deck_id}")
 def update_deck(deck_id: str, req: UpdateDeckRequest):
     try:
-        return collection.update_deck(deck_id, req.status, req.name)
+        return collection.update_deck(deck_id, req.status, req.name, req.base_id)
     except collection.CollectionError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404 if "isn't in your library" in str(exc) else 400, str(exc))
 
 
 @app.delete("/api/collection/decks/{deck_id}")
@@ -416,7 +418,7 @@ def check_collection(req: CheckRequest):
     commanders = [c for c in req.commanders if c.strip()] or deck.commanders
     if not deck.cards and not commanders:
         raise HTTPException(400, "Paste or fetch a deck first")
-    return collection.check_deck(req.decklist, commanders, req.deck_id)
+    return collection.check_deck(req.decklist, commanders, req.deck_id, req.base_id)
 
 
 # ---------------------------------------------------------------------------

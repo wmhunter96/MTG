@@ -5,11 +5,15 @@ check can say "you own this card, but it's sleeved up in your Built X deck".
 Both live in /config/collection.json next to settings.yaml:
 
   {"collection": {"source", "imported_at", "cards": {key: {"name", "qty"}}},
-   "decks": [{"id", "name", "url", "commanders", "decklist", "status", "updated_at"}]}
+   "decks": [{"id", "name", "url", "commanders", "decklist", "status", "updated_at", "base_id"?}]}
 
 The collection is everything you own, including cards sitting in decks
 (the way Archidekt's collection tracker counts them). Built decks hold their
 cards; Brewing decks don't, since they're still on paper.
+
+A deck can point at a base deck (base_id): it's a testing copy of a deck you
+own, so the base deck's cards count as available to it, and the copy itself
+never holds cards (they're the base deck's cards).
 
 Archidekt has no official API. The collection and deck-list endpoints below
 are the ones its own site uses and can change without notice, so a pasted CSV
@@ -331,7 +335,9 @@ def new_deck(name: str, decklist: str, commanders: List[str], status: str, url: 
             "status": status if status in ("built", "brewing") else "built"}
 
 
-def update_deck(deck_id: str, status: Optional[str] = None, name: Optional[str] = None) -> dict:
+def update_deck(deck_id: str, status: Optional[str] = None, name: Optional[str] = None,
+                base_id: Optional[str] = None) -> dict:
+    """base_id: "" clears the base deck link, None leaves it alone."""
     with _lock:
         data = load()
         deck = next((d for d in data["decks"] if d["id"] == deck_id), None)
@@ -341,6 +347,13 @@ def update_deck(deck_id: str, status: Optional[str] = None, name: Optional[str] 
             deck["status"] = status
         if name and name.strip():
             deck["name"] = name.strip()
+        if base_id is not None:
+            if base_id and (base_id == deck_id or not any(d["id"] == base_id for d in data["decks"])):
+                raise CollectionError("Pick another deck from your library as the base deck.")
+            if base_id:
+                deck["base_id"] = base_id
+            else:
+                deck.pop("base_id", None)
         save(data)
     return summary()
 
@@ -349,6 +362,9 @@ def delete_deck(deck_id: str) -> dict:
     with _lock:
         data = load()
         data["decks"] = [d for d in data["decks"] if d["id"] != deck_id]
+        for d in data["decks"]:
+            if d.get("base_id") == deck_id:
+                d.pop("base_id")
         save(data)
     return summary()
 
@@ -378,21 +394,36 @@ def _same_commanders(a: List[str], b: List[str]) -> bool:
 def _built_usage(decks: List[dict]) -> Dict[str, List[dict]]:
     usage: Dict[str, List[dict]] = {}
     for d in decks:
-        if d.get("status") != "built":
+        if d.get("status") != "built" or d.get("base_id"):   # a testing copy shares its base deck's cards
             continue
         for key, (name, qty) in _deck_cards(d).items():
             usage.setdefault(key, []).append({"deck": d["name"], "deck_id": d["id"], "name": name, "qty": qty})
     return usage
 
 
-def check_deck(decklist: str, commanders: List[str], deck_id: str = "") -> dict:
-    """Per card: do you have a free copy, or are your copies all in other Built decks?"""
+def check_deck(decklist: str, commanders: List[str], deck_id: str = "",
+               base_id: Optional[str] = None) -> dict:
+    """Per card: do you have a free copy, or are your copies all in other Built decks?
+
+    base_id names a deck to ignore, so its cards count as free (checking a testing
+    copy against the deck it upgrades). None uses the deck's saved base deck,
+    "" ignores none.
+    """
     data = load()
     owned = data["collection"]["cards"]
-    this = next((d for d in data["decks"] if d["id"] == deck_id), None) if deck_id else None
-    if this is None:
+    by_id = {d["id"]: d for d in data["decks"]}
+    this = by_id.get(deck_id) if deck_id else None
+    if this is None and base_id is None:
         this = next((d for d in data["decks"] if _same_commanders(d.get("commanders") or [], commanders)), None)
-    others = [d for d in data["decks"] if this is None or d["id"] != this["id"]]
+    elif this is None:
+        # A testing copy shares its base deck's commanders; don't mistake the base for it.
+        this = next((d for d in data["decks"] if d["id"] != base_id
+                     and _same_commanders(d.get("commanders") or [], commanders)), None)
+    if base_id is None:
+        base_id = (this or {}).get("base_id", "")
+    base = by_id.get(base_id) if base_id and (this is None or base_id != this["id"]) else None
+    skip = {d["id"] for d in (this, base) if d}
+    others = [d for d in data["decks"] if d["id"] not in skip]
     usage = _built_usage(others)
 
     deck = {"decklist": decklist, "commanders": commanders}
@@ -416,6 +447,7 @@ def check_deck(decklist: str, commanders: List[str], deck_id: str = "") -> dict:
     return {
         "rows": rows,
         "matched_deck": {"id": this["id"], "name": this["name"]} if this else None,
+        "base_deck": {"id": base["id"], "name": base["name"]} if base else None,
         "have": count("have"), "in_use": count("in_use"), "missing": count("missing"),
         "to_buy": sum(r["need"] for r in rows),
         "skipped_basics": skipped,
