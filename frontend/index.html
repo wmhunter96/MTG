@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MTG Toolkit</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111116;
+    --border: #222230;
+    --accent: #e8b04a;
+    --accent2: #00d4ff;
+    --ck: #4aa3ff;
+    --tcg: #3ddc97;
+    --danger: #ff4444;
+    --success: #00ff88;
+    --muted: #6a6a80;
+    --text: #e0e0f0;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 15px; min-height: 100vh; display: flex; flex-direction: column; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid var(--border); background: var(--surface); gap: 16px; flex-wrap: wrap; }
+  .logo { font-family: var(--mono); font-size: 22px; letter-spacing: 0.08em; color: var(--accent); text-shadow: 0 0 18px rgba(232,176,74,0.35); }
+  .logo span { color: var(--muted); }
+  nav { display: flex; gap: 4px; }
+  nav button { background: none; border: 1px solid transparent; color: var(--muted); font-family: var(--sans); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; padding: 6px 16px; cursor: pointer; border-radius: 4px; transition: all 0.15s; }
+  nav button:hover { color: var(--text); border-color: var(--border); }
+  nav button.active { color: var(--accent); border-color: var(--accent); background: rgba(232,176,74,0.06); }
+
+  main { flex: 1; display: grid; grid-template-columns: 400px 1fr; height: calc(100vh - 63px); }
+  .panel { border-right: 1px solid var(--border); overflow-y: auto; padding: 28px 24px; display: flex; flex-direction: column; gap: 18px; }
+  .panel-right { overflow-y: auto; padding: 28px; display: flex; flex-direction: column; gap: 16px; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    .panel { border-right: none; border-bottom: 1px solid var(--border); }
+    header { padding: 14px 16px; }
+    .panel, .panel-right { padding: 20px 16px; }
+  }
+
+  .section-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+  input[type="text"], input[type="number"], select, textarea {
+    width: 100%; background: #0d0d14; border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 13px; padding: 9px 12px; border-radius: 4px; outline: none; transition: border-color 0.15s;
+  }
+  textarea { min-height: 300px; resize: vertical; line-height: 1.5; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(232,176,74,0.08); }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+  .btn { background: var(--accent); color: #111; border: none; font-family: var(--sans); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; padding: 11px 18px; border-radius: 4px; cursor: pointer; transition: opacity 0.15s; }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn.ghost { background: none; color: var(--text); border: 1px solid var(--border); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.small { padding: 6px 12px; font-size: 11px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+  .tile .k { font-family: var(--mono); font-size: 11px; letter-spacing: 0.15em; color: var(--muted); text-transform: uppercase; }
+  .tile .v { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tile.best .v { color: var(--accent); }
+
+  .progress { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width 0.2s; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-family: var(--mono); font-weight: 400; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); cursor: pointer; white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sub { font-size: 12px; color: var(--muted); }
+  .win { font-weight: 700; }
+  .win.ck { color: var(--ck); }
+  .win.tcg { color: var(--tcg); }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; }
+  .badge.ck { color: var(--ck); }
+  .badge.tcg { color: var(--tcg); }
+  .badge.muted { color: var(--muted); }
+  .table-wrap { overflow-x: auto; }
+
+  .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 60px 20px; border: 1px dashed var(--border); border-radius: 6px; }
+  .error { color: var(--danger); font-size: 14px; }
+
+  .list-block { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  .list-block summary { padding: 12px 16px; cursor: pointer; font-weight: 600; display: flex; justify-content: space-between; }
+  .list-block summary .sub { font-weight: 400; }
+  .list-block table td, .list-block table th { padding: 6px 16px; }
+  .bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; width: 80px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .bar > div { height: 100%; background: var(--accent2); }
+
+  #card-preview { position: fixed; pointer-events: none; z-index: 10; display: none; width: 220px; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
+  .hover-card { cursor: default; border-bottom: 1px dotted var(--muted); }
+
+  .tab { display: none; }
+  .tab.active { display: contents; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--accent); color: var(--text); padding: 10px 16px; border-radius: 4px; font-size: 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MTG<span>//</span>TOOLKIT</div>
+  <nav>
+    <button data-tab="prices" class="active">Prices</button>
+    <button data-tab="edhrec">EDHREC</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ── Left: decklist (shared by Prices + EDHREC) ── -->
+  <section class="panel" id="left-deck">
+    <div class="section-label">Decklist</div>
+    <div class="field">
+      <textarea id="decklist" spellcheck="false" placeholder="Paste a list or a Moxfield / Archidekt / Arena export:&#10;&#10;Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;1 Sol Ring&#10;1x Arcane Signet (CMR) 297&#10;1 Doubling Season *F*"></textarea>
+      <div class="hint" id="deck-summary">Lines like "1 Sol Ring", "1x Sol Ring (CMR) 472", or just "Sol Ring". Maybeboard sections are ignored.</div>
+    </div>
+
+    <div class="tab active" data-pane="prices">
+      <div class="section-label">Best price</div>
+      <div class="hint">Cheapest Near Mint, non-foil copy of any printing at Card Kingdom (in stock only) vs TCGplayer (market price).</div>
+      <button class="btn" id="price-btn">Find best prices</button>
+    </div>
+
+    <div class="tab" data-pane="edhrec">
+      <div class="section-label">EDHREC</div>
+      <div class="field">
+        <label for="commander">Commander(s)</label>
+        <input type="text" id="commander" placeholder="Atraxa, Praetors' Voice  (partners: separate with +)" />
+        <div class="hint">Filled in automatically when the list has a Commander section or *CMDR* marker.</div>
+      </div>
+      <div class="field">
+        <label for="variant">Page</label>
+        <select id="variant">
+          <option value="">All decks</option>
+          <option value="budget">Budget</option>
+          <option value="expensive">Expensive</option>
+          <option value="__theme">Theme…</option>
+        </select>
+        <input type="text" id="theme" placeholder="Theme as on EDHREC, e.g. tokens, infect, superfriends" style="display:none" />
+      </div>
+      <button class="btn" id="edhrec-btn">Find missing cards</button>
+    </div>
+
+    <div class="tab" data-pane="settings">
+      <div class="hint">Settings apply to new lookups. Your decklist stays in this browser.</div>
+    </div>
+  </section>
+
+  <!-- ── Right: results ── -->
+  <section class="panel-right">
+    <!-- Prices -->
+    <div class="tab active" data-pane="prices">
+      <div id="price-status" style="display:none">
+        <div class="row" style="justify-content:space-between; margin-bottom:6px"><span class="sub" id="price-current"></span><span class="sub" id="price-count"></span></div>
+        <div class="progress"><div id="price-bar"></div></div>
+      </div>
+      <div id="price-error" class="error"></div>
+      <div id="price-results"><div class="empty">Paste a decklist and press <b>Find best prices</b>.</div></div>
+    </div>
+
+    <!-- EDHREC -->
+    <div class="tab" data-pane="edhrec">
+      <div id="edhrec-error" class="error"></div>
+      <div id="edhrec-results"><div class="empty">Paste your deck, enter the commander, and press <b>Find missing cards</b> to see what EDHREC decks run that yours doesn't.</div></div>
+    </div>
+
+    <!-- Settings -->
+    <div class="tab" data-pane="settings">
+      <div class="section-label">Pricing</div>
+      <div class="field" style="max-width:420px">
+        <label for="s-cache">Refresh prices every (hours)</label>
+        <input type="number" id="s-cache" min="1" step="1" />
+        <div class="hint">Card Kingdom's price list and TCGplayer market prices both update about daily.</div>
+      </div>
+      <div class="field" style="max-width:420px">
+        <label for="s-tie">When prices tie</label>
+        <select id="s-tie"><option value="cardkingdom">Card Kingdom wins</option><option value="tcgplayer">TCGplayer wins</option></select>
+      </div>
+      <label class="check"><input type="checkbox" id="s-basics" /> Skip basic lands</label>
+      <div class="section-label">EDHREC</div>
+      <div class="field" style="max-width:420px">
+        <label for="s-minpct">Hide suggestions in fewer than (% of decks)</label>
+        <input type="number" id="s-minpct" min="0" max="100" step="1" />
+      </div>
+      <div class="row">
+        <button class="btn" id="save-settings">Save</button>
+        <button class="btn ghost" id="clear-cache">Clear cached prices</button>
+      </div>
+      <div class="hint" id="cache-status"></div>
+    </div>
+  </section>
+</main>
+
+<img id="card-preview" alt="" />
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (n) => n == null ? '—' : '$' + Number(n).toFixed(2);
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+  return body;
+}
+
+// ── Tabs ──
+let activeTab = 'prices';
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  $('decklist').closest('.field').style.display = name === 'settings' ? 'none' : '';
+  document.querySelector('#left-deck > .section-label').style.display = name === 'settings' ? 'none' : '';
+  if (name === 'settings') loadSettings();
+  store.set('tab', name);
+}
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+// ── Decklist (persisted in this browser) ──
+$('decklist').value = store.get('decklist') || '';
+let parseTimer;
+$('decklist').addEventListener('input', () => {
+  store.set('decklist', $('decklist').value);
+  clearTimeout(parseTimer); parseTimer = setTimeout(summarizeDeck, 400);
+});
+async function summarizeDeck() {
+  const text = $('decklist').value;
+  if (!text.trim()) { $('deck-summary').textContent = 'Lines like "1 Sol Ring", "1x Sol Ring (CMR) 472", or just "Sol Ring". Maybeboard sections are ignored.'; return; }
+  try {
+    const d = await api('/api/parse', { method: 'POST', body: JSON.stringify({ decklist: text }) });
+    $('deck-summary').textContent = `${d.count} cards (${d.cards.length} unique)` + (d.commanders.length ? ` · Commander: ${d.commanders.join(' + ')}` : '');
+    if (d.commanders.length && !$('commander').dataset.touched) $('commander').value = d.commanders.join(' + ');
+  } catch {}
+}
+$('commander').addEventListener('input', () => { $('commander').dataset.touched = $('commander').value ? '1' : ''; });
+
+// ── Card image preview on hover (Scryfall image redirect) ──
+const preview = $('card-preview');
+document.addEventListener('mouseover', (e) => {
+  const el = e.target.closest('[data-card]');
+  if (!el) return;
+  preview.src = el.dataset.img || `https://api.scryfall.com/cards/named?format=image&version=normal&exact=${encodeURIComponent(el.dataset.card)}`;
+  preview.style.display = 'block';
+});
+document.addEventListener('mouseout', (e) => { if (e.target.closest('[data-card]')) preview.style.display = 'none'; });
+document.addEventListener('mousemove', (e) => {
+  if (preview.style.display !== 'block') return;
+  const x = e.clientX + 240 > innerWidth ? e.clientX - 240 : e.clientX + 20;
+  const y = Math.min(e.clientY + 10, innerHeight - 320);
+  preview.style.left = x + 'px'; preview.style.top = y + 'px';
+});
+
+// ── Prices ──
+let lastPrices = null;
+let priceSort = { key: 'savings', dir: -1 };
+let priceFilter = 'all';
+
+async function runPrices(listText) {
+  $('price-error').textContent = '';
+  $('price-btn').disabled = true;
+  $('price-status').style.display = '';
+  $('price-bar').style.width = '0';
+  try {
+    const { id } = await api('/api/prices/jobs', { method: 'POST', body: JSON.stringify({ decklist: listText }) });
+    while (true) {
+      await new Promise(r => setTimeout(r, 700));
+      const job = await api(`/api/prices/jobs/${id}`);
+      $('price-current').textContent = job.current ? `Checking ${job.current}` : '';
+      $('price-count').textContent = `${job.done} / ${job.total}`;
+      $('price-bar').style.width = (job.total ? 100 * job.done / job.total : 0) + '%';
+      if (job.status === 'done') { lastPrices = job.result; renderPrices(); break; }
+      if (job.status === 'error') throw new Error(job.error);
+    }
+  } catch (err) {
+    $('price-error').textContent = err.message;
+  } finally {
+    $('price-btn').disabled = false;
+    $('price-status').style.display = 'none';
+  }
+}
+$('price-btn').addEventListener('click', () => {
+  if (!$('decklist').value.trim()) return toast('Paste a decklist first');
+  runPrices($('decklist').value);
+});
+
+function sortVal(r, key) {
+  switch (key) {
+    case 'name': return r.name.toLowerCase();
+    case 'qty': return r.qty;
+    case 'ck': return r.cardkingdom?.price ?? Infinity;
+    case 'tcg': return r.tcgplayer?.price ?? Infinity;
+    case 'best': return r.best_price ?? -1;
+    case 'savings': return r.savings ?? -1;
+  }
+}
+
+function renderPrices() {
+  const { rows, totals: t } = lastPrices;
+  const priced = rows.filter(r => r.status === 'ok');
+  const other = rows.filter(r => r.status !== 'ok');
+  let shown = priced.filter(r => priceFilter === 'all' || r.best === priceFilter);
+  shown.sort((a, b) => {
+    const va = sortVal(a, priceSort.key), vb = sortVal(b, priceSort.key);
+    return (va > vb ? 1 : va < vb ? -1 : 0) * priceSort.dir;
+  });
+  const ckCount = t.by_store.cardkingdom.cards, tcgCount = t.by_store.tcgplayer.cards;
+  const head = (key, label, cls = '') => `<th data-sort="${key}" class="${cls}">${label}${priceSort.key === key ? (priceSort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+
+  $('price-results').innerHTML = `
+    <div class="tiles">
+      <div class="tile best"><div class="k">Best split</div><div class="v">${money(t.best_split)}</div><div class="s">${ckCount} from CK · ${tcgCount} from TCGplayer</div></div>
+      <div class="tile"><div class="k">All Card Kingdom</div><div class="v">${money(t.cardkingdom_only)}</div><div class="s">${t.cardkingdom_missing ? t.cardkingdom_missing + ' not in stock' : 'everything in stock'}</div></div>
+      <div class="tile"><div class="k">All TCGplayer</div><div class="v">${money(t.tcgplayer_only)}</div><div class="s">${t.tcgplayer_missing ? t.tcgplayer_missing + ' without a price' : 'market prices'}</div></div>
+    </div>
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <select id="price-filter" style="width:auto">
+          <option value="all">All cards (${priced.length})</option>
+          <option value="cardkingdom">Buy from Card Kingdom (${priced.filter(r => r.best === 'cardkingdom').length})</option>
+          <option value="tcgplayer">Buy from TCGplayer (${priced.filter(r => r.best === 'tcgplayer').length})</option>
+        </select>
+      </div>
+      <div class="row">
+        <button class="btn ghost small" id="copy-ck">Copy CK list</button>
+        <a class="btn ghost small" href="https://www.cardkingdom.com/builder" target="_blank" rel="noopener">CK deck builder ↗</a>
+        <button class="btn ghost small" id="copy-tcg">Copy TCGplayer list</button>
+        <a class="btn ghost small" href="https://www.tcgplayer.com/massentry?productline=Magic" target="_blank" rel="noopener">TCG mass entry ↗</a>
+        <button class="btn ghost small" id="export-csv">CSV</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>${head('name', 'Card')}${head('qty', 'Qty', 'num')}${head('ck', 'Card Kingdom')}${head('tcg', 'TCGplayer')}${head('best', 'Best')}${head('savings', 'Saves')}</tr></thead>
+      <tbody>${shown.map(priceRow).join('')}</tbody>
+    </table></div>
+    ${other.length ? `<div class="section-label">Not priced (${other.length})</div>
+      <div class="hint">${other.map(r => `${esc(r.name)} <span class="badge muted">${{skipped: 'basic land', not_found: 'unknown card', no_price: 'no price'}[r.status] || r.status}</span>${r.ck_out_of_stock ? ' <span class="badge muted">CK out of stock</span>' : ''}`).join(' &nbsp; ')}</div>` : ''}
+    <div class="hint">Card Kingdom price list from ${new Date(lastPrices.ck_pricelist_at * 1000).toLocaleString()}. TCGplayer prices are market prices via Scryfall.</div>`;
+
+  $('price-filter').value = priceFilter;
+  $('price-filter').addEventListener('change', (e) => { priceFilter = e.target.value; renderPrices(); });
+  document.querySelectorAll('#price-results th[data-sort]').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.sort;
+    priceSort = { key: k, dir: priceSort.key === k ? -priceSort.dir : (k === 'name' ? 1 : -1) };
+    renderPrices();
+  }));
+  $('copy-ck').addEventListener('click', () => copyList('cardkingdom'));
+  $('copy-tcg').addEventListener('click', () => copyList('tcgplayer'));
+  $('export-csv').addEventListener('click', exportCsv);
+}
+
+function priceRow(r) {
+  const ck = r.cardkingdom, tcg = r.tcgplayer;
+  const cell = (o, store) => o ? `
+      <a href="${esc(o.url)}" target="_blank" rel="noopener" class="${r.best === store ? 'win ' + (store === 'cardkingdom' ? 'ck' : 'tcg') : ''}">${money(o.price)}</a>
+      <div class="sub">${esc(o.set_name)}${o.variation ? ' · ' + esc(o.variation) : ''}${o.stock != null ? ' · ' + o.stock + ' in stock' : ''}</div>`
+    : `<span class="sub">${store === 'cardkingdom' && r.ck_out_of_stock ? 'out of stock' : '—'}</span>`;
+  const badge = r.best === 'cardkingdom' ? '<span class="badge ck">CK</span>' : '<span class="badge tcg">TCG</span>';
+  return `<tr>
+    <td><span class="hover-card" data-card="${esc(r.name)}" data-img="${esc(r.image || '')}">${esc(r.name)}</span>${r.commander ? ' <span class="badge muted">CMDR</span>' : ''}</td>
+    <td class="num">${r.qty}</td>
+    <td>${cell(ck, 'cardkingdom')}</td>
+    <td>${cell(tcg, 'tcgplayer')}</td>
+    <td>${badge} ${money(r.best_price)}</td>
+    <td class="num">${r.savings ? money(r.savings) : '—'}</td>
+  </tr>`;
+}
+
+function copyList(storeName) {
+  const rows = lastPrices.rows.filter(r => r.status === 'ok' && r.best === storeName);
+  if (!rows.length) return toast('Nothing to buy there');
+  navigator.clipboard.writeText(rows.map(r => `${r.qty} ${r.name}`).join('\n'))
+    .then(() => toast(`Copied ${rows.length} cards`), () => toast('Copy failed'));
+}
+
+function exportCsv() {
+  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Card', 'Qty', 'CK price', 'CK printing', 'CK stock', 'TCG price', 'TCG printing', 'Best store', 'Best price', 'Savings', 'CK link', 'TCG link'].map(q).join(',')];
+  for (const r of lastPrices.rows) {
+    const ck = r.cardkingdom || {}, tcg = r.tcgplayer || {};
+    lines.push([r.name, r.qty, ck.price, ck.set_name, ck.stock, tcg.price, tcg.set_name,
+      r.best === 'cardkingdom' ? 'Card Kingdom' : r.best === 'tcgplayer' ? 'TCGplayer' : r.status,
+      r.best_price, r.savings, ck.url, tcg.url].map(q).join(','));
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  a.download = `best-prices-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
+
+// ── EDHREC ──
+let lastEdhrec = null;
+let edhrecSort = 'synergy';
+const picked = new Set();
+
+$('variant').addEventListener('change', () => { $('theme').style.display = $('variant').value === '__theme' ? '' : 'none'; });
+
+$('edhrec-btn').addEventListener('click', async () => {
+  $('edhrec-error').textContent = '';
+  const commanders = $('commander').value.split('+').map(s => s.trim()).filter(Boolean);
+  const variant = $('variant').value === '__theme' ? $('theme').value.trim() : $('variant').value;
+  $('edhrec-btn').disabled = true;
+  $('edhrec-results').innerHTML = '<div class="empty">Asking EDHREC…</div>';
+  try {
+    lastEdhrec = await api('/api/edhrec', { method: 'POST', body: JSON.stringify({ decklist: $('decklist').value, commanders, variant }) });
+    picked.clear();
+    renderEdhrec();
+  } catch (err) {
+    $('edhrec-error').textContent = err.message;
+    $('edhrec-results').innerHTML = '';
+  } finally {
+    $('edhrec-btn').disabled = false;
+  }
+});
+
+function renderEdhrec() {
+  const d = lastEdhrec;
+  const sortFn = edhrecSort === 'synergy'
+    ? (a, b) => (b.synergy_pct ?? -999) - (a.synergy_pct ?? -999)
+    : (a, b) => (b.inclusion_pct ?? -1) - (a.inclusion_pct ?? -1);
+  $('edhrec-results').innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><b>${esc(d.commander)}</b> <span class="sub">· ${d.missing_count} cards your deck doesn't run · <a href="${esc(d.url)}" target="_blank" rel="noopener">open on EDHREC ↗</a></span></div>
+      <div class="row">
+        <select id="edhrec-sort" style="width:auto">
+          <option value="synergy">Sort by synergy</option>
+          <option value="inclusion">Sort by % of decks</option>
+        </select>
+        <button class="btn small" id="price-picked" disabled>Price selected</button>
+      </div>
+    </div>
+    <div class="hint">Synergy = how much more often this commander's decks run the card than other decks of its colors. Tick cards to price them.</div>
+    ${d.lists.length ? d.lists.map((l, i) => `
+      <details class="list-block" ${i < 3 ? 'open' : ''}>
+        <summary>${esc(l.header)} <span class="sub">${l.cards.length}</span></summary>
+        <table><thead><tr><th style="width:28px"></th><th>Card</th><th>Synergy</th><th>In decks</th></tr></thead><tbody>
+        ${[...l.cards].sort(sortFn).map(c => `<tr>
+          <td><input type="checkbox" data-pick="${esc(c.name)}" ${picked.has(c.name) ? 'checked' : ''}></td>
+          <td><a href="${esc(c.url)}" target="_blank" rel="noopener" data-card="${esc(c.name)}">${esc(c.name)}</a></td>
+          <td class="num" style="text-align:left">${c.synergy_pct == null ? '—' : (c.synergy_pct > 0 ? '+' : '') + c.synergy_pct + '%'}</td>
+          <td style="white-space:nowrap">${c.inclusion_pct == null ? '—' : `<span class="bar"><div style="width:${Math.min(100, c.inclusion_pct)}%"></div></span>${c.inclusion_pct}%`}</td>
+        </tr>`).join('')}
+        </tbody></table>
+      </details>`).join('') : '<div class="empty">Your deck already runs everything EDHREC lists for this commander.</div>'}`;
+
+  $('edhrec-sort').value = edhrecSort;
+  $('edhrec-sort').addEventListener('change', (e) => { edhrecSort = e.target.value; renderEdhrec(); });
+  document.querySelectorAll('[data-pick]').forEach(cb => cb.addEventListener('change', () => {
+    cb.checked ? picked.add(cb.dataset.pick) : picked.delete(cb.dataset.pick);
+    updatePickBtn();
+  }));
+  $('price-picked').addEventListener('click', () => {
+    showTab('prices');
+    runPrices([...picked].map(n => `1 ${n}`).join('\n'));
+  });
+  updatePickBtn();
+}
+function updatePickBtn() {
+  const b = $('price-picked');
+  b.disabled = !picked.size;
+  b.textContent = picked.size ? `Price ${picked.size} selected` : 'Price selected';
+}
+
+// ── Settings ──
+async function loadSettings() {
+  const s = await api('/api/settings');
+  $('s-cache').value = s.pricing.cache_hours;
+  $('s-tie').value = s.pricing.tie_goes_to;
+  $('s-basics').checked = s.pricing.skip_basic_lands;
+  $('s-minpct').value = s.edhrec.min_inclusion_pct;
+  const st = await api('/api/status');
+  $('cache-status').textContent = st.ck_pricelist_at
+    ? `Card Kingdom price list downloaded ${new Date(st.ck_pricelist_at).toLocaleString()}.`
+    : 'Card Kingdom price list not downloaded yet (happens on the first price check).';
+}
+$('save-settings').addEventListener('click', async () => {
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({
+      cache_hours: Number($('s-cache').value) || 12,
+      tie_goes_to: $('s-tie').value,
+      skip_basic_lands: $('s-basics').checked,
+      min_inclusion_pct: Number($('s-minpct').value) || 0,
+    }) });
+    toast('Settings saved');
+  } catch (err) { toast(err.message); }
+});
+$('clear-cache').addEventListener('click', async () => {
+  await api('/api/cache/clear', { method: 'POST' });
+  toast('Cache cleared');
+  loadSettings();
+});
+
+showTab(store.get('tab') || 'prices');
+summarizeDeck();
+</script>
+</body>
+</html>
