@@ -10,6 +10,15 @@ A small, whimsical self-hosted web app for Magic: The Gathering Commander player
 
 Paste a list, or drop in a **Moxfield** or **Archidekt** deck link and press **Fetch** (the deck must be public). The deck and commander are shared by every tab and remembered in your browser. If Moxfield refuses the request (it sometimes blocks servers), use Moxfield's *Export → Text* and paste it instead.
 
+### Built or Brewing
+
+Each deck has a **Built / Brewing** switch (remembered per commander in your browser):
+
+- **🏰 Built** (you own the deck): Brew Ideas shows the **best new cards from the newest few sets** (3 by default) as a card grid, ranked the same way as the New Sets tab. You can still switch it to show every EDHREC suggestion.
+- **⚗ Brewing** (still buying): Brew Ideas and New Sets only suggest cards at or under your **max price per card** ($5 by default), using the cheaper of Card Kingdom's lowest in-stock price and TCGplayer's market price. Bargains flags deck cards that cost more than the cap.
+
+Both numbers live in Settings.
+
 ### Best price per card (Bargains tab)
 
 Paste a decklist and get the cheapest copy of every card across **Card Kingdom** and **TCGplayer**:
@@ -56,6 +65,8 @@ Settings tab (saved to `/config/settings.yaml`):
 - **Refresh prices every (hours)**: how long Scryfall printings and the CK price list are cached (default 12)
 - **When prices tie**: Card Kingdom (default) or TCGplayer
 - **Skip basic lands**
+- **Brewing decks: max price per card** (default $5)
+- **Built decks: look at the newest N sets** (default 3)
 - **Hide EDHREC suggestions** below a % of decks
 
 Cached data lives in `/config/cache` and survives container updates. **Clear cached prices** forces a fresh download.

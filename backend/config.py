@@ -42,6 +42,13 @@ def _defaults() -> dict:
             # When both stores are within a cent, who wins: "cardkingdom" or "tcgplayer".
             "tie_goes_to": "cardkingdom",
         },
+        "brewing": {
+            # Decks marked "Brewing" only get suggestions at or under this
+            # price per card (cheapest of Card Kingdom in stock / TCGplayer market).
+            "budget_max_usd": 5.0,
+            # Decks marked "Built" get Brew Ideas from this many of the newest sets.
+            "recent_sets": 3,
+        },
         "edhrec": {
             # Hide EDHREC suggestions that appear in fewer than this % of the
             # commander's decks (0 = show everything).
